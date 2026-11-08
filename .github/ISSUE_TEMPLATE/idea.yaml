@@ -1,0 +1,56 @@
+name: 💡 Idea or Feedback
+description: Suggest a new capability, an improvement, or share feedback about eyas-mcp
+title: "[Idea]: "
+labels: ["enhancement"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to share an idea! eyas-mcp doesn't accept outside pull requests,
+        so describing what you need is the best way to shape what gets built.
+
+        **Please don't include API credentials, tenant data or customer data.**
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of idea is this?
+      options:
+        - A Falcon capability eyas-mcp can't reach yet
+        - An improvement to an existing tool
+        - Documentation or client setup
+        - General feedback
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: |
+        Describe the task or question you have, and where eyas-mcp falls short today.
+      placeholder: |
+        I want my assistant to...
+        Today I have to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: What would help?
+      description: |
+        Your suggestion, if you have one. Naming the Falcon API, FalconPy service class, or
+        console feature involved helps a lot.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context (Optional)
+      description: |
+        Your MCP client, how you deploy eyas-mcp, or anything else that helps.
+      placeholder: |
+        - MCP client: Claude Code / Copilot / Gemini CLI / my own app
+        - Read-only or read-write deployment

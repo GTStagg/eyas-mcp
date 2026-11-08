@@ -1,0 +1,56 @@
+name: Docker Build Test
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'Dockerfile'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'falcon_mcp/**'
+      - '.github/workflows/docker-build-test.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  docker-build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+
+      - name: Build multi-platform Docker image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: |
+            eyas-mcp:test
+            eyas-mcp:pr-${{ github.event.pull_request.number }}
+
+      - name: Test Docker image (amd64)
+        run: |
+          # Build for local testing (amd64 only for running tests)
+          docker buildx build \
+            --platform linux/amd64 \
+            --load \
+            --tag eyas-mcp:test-local \
+            .
+
+          # Test basic functionality - should show help without errors
+          echo "Testing eyas-mcp --help..."
+          docker run --rm eyas-mcp:test-local --help
+
+          # Test version command | TBD: Add version check
+          #echo "Testing eyas-mcp --version..."
+          #docker run --rm eyas-mcp:test-local --version || true
+
+          echo "✅ Docker image smoke tests passed!"

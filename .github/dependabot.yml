@@ -1,0 +1,64 @@
+version: 2
+updates:
+  # Python dependencies configuration (uv ecosystem)
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "deps(python):"
+    labels:
+      - "dependencies"
+      - "python"
+    groups:
+      python-all:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      python-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "mcp"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "ruff"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "mypy"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+
+  # GitHub Actions configuration
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "deps(actions):"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      actions-all:
+        patterns:
+          - "*"
+
+  # Docker configuration
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "deps(docker):"
+    labels:
+      - "dependencies"
+      - "docker"
+    groups:
+      docker-all:
+        patterns:
+          - "*"

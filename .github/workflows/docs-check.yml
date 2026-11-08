@@ -1,0 +1,51 @@
+name: Docs Freshness Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'falcon_mcp/**'
+      - 'scripts/generate_module_docs.py'
+      - 'docs/**'
+      - '.github/workflows/docs-check.yml'
+  pull_request:
+    paths:
+      - 'falcon_mcp/**'
+      - 'scripts/generate_module_docs.py'
+      - 'docs/**'
+      - '.github/workflows/docs-check.yml'
+
+# Deny all permissions at the workflow level; each job grants only what it needs.
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
+
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@0a73d6eb01c0201c8fc84847d0f4425b704ad66d # v5
+
+      - name: Install Python dependencies
+        run: uv sync --all-extras
+
+      - name: Generate module documentation
+        run: uv run python scripts/generate_module_docs.py
+
+      - name: Check for stale docs
+        run: |
+          git add -N docs/modules/
+          if ! git diff --exit-code docs/modules/; then
+            echo "::error::Module docs are out of date. Run 'uv run python scripts/generate_module_docs.py' and commit the changes."
+            exit 1
+          fi

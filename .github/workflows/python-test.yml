@@ -1,0 +1,38 @@
+name: Python Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@0a73d6eb01c0201c8fc84847d0f4425b704ad66d
+        with:
+          version: "0.7.13"
+          activate-environment: true
+
+      - name: Install dependencies
+        run: |
+          uv sync --extra dev
+
+      - name: Test with pytest
+        run: |
+          pytest
