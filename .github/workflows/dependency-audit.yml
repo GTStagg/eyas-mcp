@@ -1,0 +1,38 @@
+name: Dependency Audit
+
+# Checks the runtime dependencies pinned in uv.lock against known advisories.
+# The weekly run catches advisories published after a lock was last changed.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.11"
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@0a73d6eb01c0201c8fc84847d0f4425b704ad66d
+        with:
+          version: "0.7.13"
+
+      - name: Export locked runtime dependencies
+        run: |
+          uv export --frozen --no-dev --no-emit-project --no-hashes -o requirements-audit.txt
+
+      - name: Audit with pip-audit
+        run: |
+          uvx pip-audit==2.10.1 -r requirements-audit.txt --strict --desc

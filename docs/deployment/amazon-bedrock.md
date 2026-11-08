@@ -62,10 +62,10 @@ The MCP Server requires internet connectivity to communicate with CrowdStrike's 
 <!-- -->
 
 > [!NOTE]
-> `FALCON_MCP_HOST=0.0.0.0`: AgentCore runs the container behind its own managed network
-> security layer, so the server is not directly exposed to the public internet the way a self-managed
-> `0.0.0.0` bind would be. `FALCON_MCP_API_KEY` is optional in this environment and adds defense in depth
-> if you want callers to present an `x-api-key` header as well.
+> `FALCON_MCP_HOST=0.0.0.0`: AgentCore runs the container behind its own network layer and
+> authenticates callers to the runtime, so the server isn't exposed the way a self-managed `0.0.0.0`
+> bind would be. Check that your runtime's inbound authorization is configured and that an
+> unauthenticated call is rejected. `FALCON_MCP_API_KEY` adds defense in depth on top of that.
 
 ## Verify Deployment
 

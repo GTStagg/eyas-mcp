@@ -81,9 +81,9 @@ eyas-mcp --transport streamable-http --stateless-http
 > `-p` port, another container, a load balancer), so control that exposure and add `--api-key` when the
 > endpoint is reachable beyond the local host.
 >
-> Managed runtimes such as AWS Bedrock AgentCore and Google Cloud Run sit behind their own network
-> security layer (IAM, private networking), so the open-bind concern above does not apply to them —
-> `--api-key` remains available there as optional defense in depth.
+> Managed runtimes such as AWS Bedrock AgentCore and Google Cloud Run can authenticate callers through
+> IAM or private ingress, but only when that's configured. Confirm that an unauthenticated request from
+> outside is rejected, and consider `--api-key` as well.
 
 ## Client Compatibility
 

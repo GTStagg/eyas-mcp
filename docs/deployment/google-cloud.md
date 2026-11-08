@@ -4,27 +4,25 @@
 <!-- meta:link-base /eyas-mcp/ -->
 
 > [!NOTE]
-> This guide is kept as historical reference. It was inherited at the time of the import, isn't maintained, and relies on the inherited ADK example, which installs the separate upstream package.
+> This guide uses the prebuilt Google ADK agent in [`examples/adk`](https://github.com/GTStagg/eyas-mcp/tree/main/examples/adk), which installs eyas-mcp from this GitHub repository. The example was inherited at the time of the import and hasn't been re-run end to end since.
 
-This guide covers deploying the Falcon MCP Server with the prebuilt Google ADK-based agent to Cloud Run or Vertex AI Agent Engine.
+This guide covers running the Falcon MCP Server with the prebuilt Google ADK agent locally, on Cloud Run, or on Vertex AI Agent Engine.
 
 ## Prerequisites
 
 - Python 3.11+, `gcloud` CLI, and `git` installed
 - Google Cloud project with billing enabled
 - CrowdStrike API credentials
-- `GOOGLE_API_KEY` from [Google AI Studio](https://ai.google.dev/gemini-api/docs/api-key)
 
-## Running Locally (5 minutes)
-
-Clone the repository:
+## Running Locally
 
 ```bash
 git clone https://github.com/GTStagg/eyas-mcp.git
 cd eyas-mcp/examples/adk
+cp falcon_agent/env.properties falcon_agent/.env
 ```
 
-Create Python environment and install dependencies:
+Fill in the Falcon and Google Cloud values in `falcon_agent/.env`, then install the dependencies and start the ADK web UI:
 
 <!-- component:tabs -->
 #### pip
@@ -33,6 +31,7 @@ Create Python environment and install dependencies:
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r falcon_agent/requirements.txt
+adk web
 ```
 
 #### uv
@@ -41,70 +40,53 @@ pip install -r falcon_agent/requirements.txt
 uv venv
 . .venv/bin/activate
 uv pip install -r falcon_agent/requirements.txt
+adk web
 ```
 <!-- /component:tabs -->
 
-Initialize config:
-
-```bash
-chmod +x adk_agent_operations.sh
-./adk_agent_operations.sh
-```
-
-The script creates a `.env` file in `falcon_agent/`. Update at minimum the `General Agent Configuration` section with your CrowdStrike credentials and Google API key.
-
-```bash
-# Run locally
-./adk_agent_operations.sh local_run
-```
-
-Access the agent at `http://localhost:8000`.
+Access the agent at `http://localhost:8000`. The [example's README](https://github.com/GTStagg/eyas-mcp/tree/main/examples/adk#setting-up-and-running-locally-5-minutes) has the full list of settings.
 
 > [!CAUTION]
 > Do not use curly braces (`{variable}`) in the `FALCON_AGENT_PROMPT` value. Google ADK interprets `{name}` patterns as context variables, which causes `Context variable not found` errors at runtime.
 
 ## Deploying to Cloud Run
 
-Make sure the required [APIs are enabled](https://cloud.google.com/run/docs/quickstarts/build-and-deploy/deploy-python-service#before-you-begin) on your GCP project.
+Make sure the required [APIs are enabled](https://cloud.google.com/run/docs/quickstarts/build-and-deploy/deploy-python-service#before-you-begin) on your GCP project, then deploy with the ADK CLI from `examples/adk`:
 
 ```bash
-cd examples/adk/
-./adk_agent_operations.sh cloudrun_deploy
+adk deploy cloud_run --project <PROJECT_ID> --region <REGION> falcon_agent/
 ```
 
-When prompted `Allow unauthenticated invocations?`, answer **N** to keep IAM authentication enabled.
-
-Once deployed, grant access to your team:
-
-1. Cloud Run > Services > `falcon-agent-service` > Permissions
-2. Add Principal > assign `Cloud Run Invoker` role
-
-Your team members can then access the service via:
+Keep IAM authentication on. If you're asked whether to allow unauthenticated invocations, answer **N**. The agent holds your CrowdStrike credentials, so an unauthenticated service lets anyone who finds the URL use them. After deploying, confirm that a request without credentials is rejected:
 
 ```bash
-gcloud run services proxy falcon-agent-service --project PROJECT-ID --region YOUR-REGION
+curl -s -o /dev/null -w "%{http_code}
+" https://<SERVICE_URL>/
+# Expect 403
+```
+
+Grant access to your team:
+
+1. Cloud Run > Services > your service > Permissions
+2. Add Principal > assign `Cloud Run Invoker` role
+
+Team members can then reach the service through an authenticated local proxy:
+
+```bash
+gcloud run services proxy <SERVICE_NAME> --project <PROJECT_ID> --region <REGION>
 ```
 
 The service is then available at `http://localhost:8080`.
 
 ## Deploying to Vertex AI Agent Engine
 
-Create a GCS bucket for staging artifacts, then:
+From `examples/adk`:
 
 ```bash
-cd examples/adk/
-./adk_agent_operations.sh agent_engine_deploy
+adk deploy agent_engine --region <REGION> --display_name falcon_adk_agent falcon_agent/
 ```
 
-Note the **Agent Engine Number** from the output (`reasoningEngines/XXXXXX`).
-
-### Registering with Agentspace
-
-Update the `# Agentspace Specific` environment variables (`PROJECT_NUMBER`, `AGENT_LOCATION`, `REASONING_ENGINE_NUMBER`, `AGENT_SPACE_APP_NAME`), then:
-
-```bash
-./adk_agent_operations.sh agentspace_register
-```
+The [example's README](https://github.com/GTStagg/eyas-mcp/tree/main/examples/adk#deploying-to-agent-runtime-and-using-as-gemini-enterprise-app-agent) covers updating a deployed agent and making it available as a Gemini Enterprise agent.
 
 ## FQL Guide Resources
 

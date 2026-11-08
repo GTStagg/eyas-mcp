@@ -77,8 +77,6 @@ eyas-mcp is installed directly from GitHub and isn't published to any package in
 uv tool install git+https://github.com/GTStagg/eyas-mcp.git
 ```
 
-The repository is private, so your git credentials need access to it. If you use the GitHub CLI, `gh auth setup-git` configures them.
-
 ### Configure
 
 Set the required environment variables (or use a `.env` file — see the [Configuration Guide](docs/getting-started/configuration.md)):
@@ -182,8 +180,9 @@ docker run --rm -p 8000:8000 --env-file /path/to/.env \
 > HTTP transports have no authentication by default. Binding to a non-loopback address (`--host 0.0.0.0`)
 > exposes an unauthenticated server that anyone who can reach the port can drive with your CrowdStrike
 > credentials. Keep the default loopback bind for local use and set `--api-key` whenever you bind wider.
-> Managed runtimes such as AWS Bedrock AgentCore and Google Cloud Run sit behind their own network
-> security layer, so this does not apply to them. See the
+> On a managed runtime such as AWS Bedrock AgentCore or Google Cloud Run, the platform can authenticate
+> callers for you, but only if its ingress is set to require it. Check that an unauthenticated request
+> from outside is rejected before you rely on it. See the
 > [Configuration guide](docs/getting-started/configuration.md#http-transport-security).
 
 See the [Docker Deployment guide](docs/deployment/docker.md) for building from GitHub, pinning a commit, custom ports, and advanced configurations.
