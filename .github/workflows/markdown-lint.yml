@@ -7,12 +7,10 @@ on:
       - '**.md'
       - '.markdownlint.json'
       - '.github/workflows/markdown-lint.yml'
+  # No path filter on pull requests: markdown-lint is a required check in the
+  # main ruleset, and a filtered-out run never reports, which blocks the PR.
   pull_request:
     branches: [ main ]
-    paths:
-      - '**.md'
-      - '.markdownlint.json'
-      - '.github/workflows/markdown-lint.yml'
 
 permissions:
   contents: read
