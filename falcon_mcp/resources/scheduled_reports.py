@@ -201,9 +201,9 @@ SEARCH_SCHEDULED_REPORTS_FQL_FILTERS = [
         """
         The username (typically an email address) who created the scheduled report/search entity.
 
-        Ex: user_id:'diana.hudson@email.com'
-        Ex: user_id:!'diana.hudson@email.com'
-        Ex: user_id:['diana.hudson@email.com','aiden.dean@email.com']
+        Ex: user_id:'analyst@example.com'
+        Ex: user_id:!'analyst@example.com'
+        Ex: user_id:['analyst@example.com','responder@example.com']
         """
     ),
 ]
@@ -233,7 +233,7 @@ filter=status:'ACTIVE'%2Bfilter=type:'event_search'
 • type:!'event_search' - Scheduled reports only
 • status:'ACTIVE'+type:'event_search' - Active scheduled searches
 • created_on:>'2023-01-01' - Created after date
-• user_id:'user@email.com' - Created by specific user
+• user_id:'user@example.com' - Created by specific user
 • last_execution.status:'FAILED' - Last execution failed
 • status:'ACTIVE'+created_on:<'2021-09-15' - Active reports created before date
 • type:['hosts','spotlight_remediations'] - Specific report types
@@ -386,9 +386,9 @@ SEARCH_REPORT_EXECUTIONS_FQL_FILTERS = [
         The ID of the user who created the scheduled report/search entity that
         generated the execution.
 
-        Ex: user_id:'diana.hudson@email.com'
-        Ex: user_id:!'diana.hudson@email.com'
-        Ex: user_id:['diana.hudson@email.com','jack.evans@email.com']
+        Ex: user_id:'analyst@example.com'
+        Ex: user_id:!'analyst@example.com'
+        Ex: user_id:['analyst@example.com','responder@example.com']
         """
     ),
 ]

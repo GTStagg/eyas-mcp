@@ -78,6 +78,7 @@ eyas-mcp --help
 | `--modules` | `FALCON_MCP_MODULES` | all | Comma-separated list of modules to enable |
 | `--debug` | `FALCON_MCP_DEBUG` | `false` | Enable debug logging |
 | `--api-key` | `FALCON_MCP_API_KEY` | — | API key for HTTP transport auth |
+| `--require-api-key` | `FALCON_MCP_REQUIRE_API_KEY` | `false` | Refuse to start an HTTP transport without `--api-key` |
 | `--stateless-http` | `FALCON_MCP_STATELESS_HTTP` | `false` | Stateless mode for scalable deployments |
 | `--member-cid` | `FALCON_MEMBER_CID` | — | Flight Control child CID |
 | `--proxy` | `FALCON_PROXY_URL` | — | HTTP/HTTPS proxy for outbound API connections |

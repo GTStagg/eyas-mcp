@@ -15,8 +15,6 @@
 uv tool install git+https://github.com/GTStagg/eyas-mcp.git
 ```
 
-The repository is private, so your git credentials need access to it. If you use the GitHub CLI, `gh auth setup-git` configures them.
-
 ## Install using pip
 
 ```bash

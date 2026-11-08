@@ -38,8 +38,6 @@ ENV/
 env/
 
 # IDE and editor files
-.vscode/
-.idea/
 *.swp
 *.swo
 *~
@@ -81,6 +79,16 @@ ehthumbs.db
 *.key
 *.p12
 *.pfx
-.env.local
-.env.production
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Agent and editor state, including local worktrees
+.claude/
+.codex/
+.cursor/
+.vscode/
+.idea/
 secrets/

@@ -49,7 +49,8 @@ eyas-mcp = "falcon_mcp.server:main"
 
 [tool.uv]
 constraint-dependencies = [
-    "pyjwt>=2.12.0",
+    "pyjwt>=2.15.1",
+    "urllib3>=2.8.0",
     "idna>=3.15",
     "requests>=2.33.0",
     "cryptography>=50.0.0",
@@ -62,6 +63,8 @@ target-version = ["py311"]
 
 [tool.mypy]
 python_version = "3.11"
+# Skip packaging output and local agent worktrees, which duplicate falcon_mcp
+exclude = ['^build/', '^dist/', '^\.claude/', '^\.venv/']
 warn_return_any = false
 warn_unused_configs = true
 disallow_untyped_defs = true

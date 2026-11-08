@@ -66,6 +66,7 @@ class FalconMCPServer:
         client_id: str | None = None,
         client_secret: str | None = None,
         api_key: str | None = None,
+        require_api_key: bool = False,
         host: str = "127.0.0.1",
         port: int = 8000,
         member_cid: str | None = None,
@@ -86,6 +87,8 @@ class FalconMCPServer:
             client_id: Falcon API Client ID (defaults to FALCON_CLIENT_ID env var)
             client_secret: Falcon API Client Secret (defaults to FALCON_CLIENT_SECRET env var)
             api_key: API key for HTTP transport authentication (x-api-key header)
+            require_api_key: Refuse to start an HTTP transport without api_key. Off by
+                default, so existing deployments keep starting as before.
             host: Host to bind to for HTTP transports (default: 127.0.0.1)
             port: Port to listen on for HTTP transports (default: 8000)
             member_cid: Child CID for Flight Control (MSSP) support (defaults to FALCON_MEMBER_CID env var)
@@ -104,6 +107,7 @@ class FalconMCPServer:
         self.user_agent_comment = user_agent_comment
         self.stateless_http = stateless_http
         self.api_key = api_key
+        self.require_api_key = require_api_key
         self.host = host
         self.port = port
         self.dynamic = dynamic
@@ -452,6 +456,11 @@ class FalconMCPServer:
         Args:
             app: The ASGI application from FastMCP
         """
+        if self.require_api_key and not self.api_key:
+            raise ValueError(
+                "--require-api-key is set but no API key was given. Set --api-key "
+                "(or FALCON_MCP_API_KEY), or drop --require-api-key."
+            )
         app = strip_trailing_slash_middleware(app)
         app = normalize_content_type_middleware(app)
         if self.api_key:
@@ -461,7 +470,9 @@ class FalconMCPServer:
             logger.warning(
                 "Server is binding to %s:%d without --api-key: the endpoint is reachable "
                 "on the network and has no authentication. Set --api-key "
-                "(or FALCON_MCP_API_KEY) when binding beyond loopback.",
+                "(or FALCON_MCP_API_KEY) unless a gateway in front of this server "
+                "authenticates every request. Add --require-api-key to refuse to start "
+                "without a key.",
                 self.host,
                 self.port,
             )
@@ -622,6 +633,14 @@ def parse_args() -> argparse.Namespace:
         help="API key for HTTP transport authentication (x-api-key header, env: FALCON_MCP_API_KEY)",
     )
 
+    parser.add_argument(
+        "--require-api-key",
+        action="store_true",
+        default=os.environ.get("FALCON_MCP_REQUIRE_API_KEY", "").lower() == "true",
+        help="Refuse to start an HTTP transport unless --api-key is set. Off by default "
+        "(env: FALCON_MCP_REQUIRE_API_KEY)",
+    )
+
     # Flight Control (MSSP) support
     parser.add_argument(
         "--member-cid",
@@ -696,6 +715,7 @@ def main() -> None:
             user_agent_comment=args.user_agent_comment,
             stateless_http=args.stateless_http,
             api_key=args.api_key,
+            require_api_key=args.require_api_key,
             host=args.host,
             port=args.port,
             member_cid=args.member_cid,

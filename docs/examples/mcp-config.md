@@ -97,8 +97,8 @@ in the `x-api-key` header:
 ```
 
 Only drop the `headers` block when the endpoint is unauthenticated — for example a loopback-only
-server, or one already fronted by a managed runtime that handles auth (AWS Bedrock AgentCore, Google
-Cloud Run):
+server, or one behind a managed runtime (AWS Bedrock AgentCore, Google Cloud Run) whose ingress you've
+confirmed rejects unauthenticated requests:
 
 ```json
 {

@@ -530,3 +530,70 @@ class TestContentTypeMiddlewareApplication:
 
         # normalize_content_type is called with the slash-wrapped app
         mock_ct_middleware.assert_called_once_with(slash_wrapped)
+
+
+class TestRequireAPIKey:
+    """--require-api-key is opt-in: off, nothing changes; on, HTTP needs a key."""
+
+    def _server(self, mock_registry, mock_client_class, **kwargs):
+        from falcon_mcp.server import FalconMCPServer
+
+        mock_client = MagicMock()
+        mock_client.authenticate.return_value = True
+        mock_client_class.return_value = mock_client
+        mock_registry.get_module_names.return_value = []
+        mock_registry.get_available_modules.return_value = {}
+        return FalconMCPServer(**kwargs)
+
+    @patch("falcon_mcp.server.FalconClient")
+    @patch("falcon_mcp.server.registry")
+    def test_defaults_to_off(self, mock_registry, mock_client_class):
+        server = self._server(mock_registry, mock_client_class)
+        assert server.require_api_key is False
+
+    @patch("falcon_mcp.server.FalconClient")
+    @patch("falcon_mcp.server.registry")
+    @patch("falcon_mcp.server.uvicorn")
+    def test_off_still_starts_open_bind(self, mock_uvicorn, mock_registry, mock_client_class):
+        """Existing deployments on 0.0.0.0 without a key keep starting."""
+        server = self._server(mock_registry, mock_client_class, host="0.0.0.0")
+        server.run(transport="streamable-http")
+        mock_uvicorn.run.assert_called_once()
+
+    @patch("falcon_mcp.server.FalconClient")
+    @patch("falcon_mcp.server.registry")
+    @patch("falcon_mcp.server.uvicorn")
+    def test_on_without_key_refuses_http(self, mock_uvicorn, mock_registry, mock_client_class):
+        import pytest
+
+        for transport in ("streamable-http", "sse"):
+            server = self._server(
+                mock_registry, mock_client_class, host="0.0.0.0", require_api_key=True
+            )
+            with pytest.raises(ValueError, match="--require-api-key"):
+                server.run(transport=transport)
+        mock_uvicorn.run.assert_not_called()
+
+    @patch("falcon_mcp.server.FalconClient")
+    @patch("falcon_mcp.server.registry")
+    @patch("falcon_mcp.server.uvicorn")
+    def test_on_with_key_starts(self, mock_uvicorn, mock_registry, mock_client_class):
+        server = self._server(
+            mock_registry,
+            mock_client_class,
+            host="0.0.0.0",
+            api_key="test-key",
+            require_api_key=True,
+        )
+        server.run(transport="streamable-http")
+        mock_uvicorn.run.assert_called_once()
+
+    @patch("falcon_mcp.server.FalconClient")
+    @patch("falcon_mcp.server.registry")
+    @patch("falcon_mcp.server.uvicorn")
+    def test_on_does_not_affect_stdio(self, mock_uvicorn, mock_registry, mock_client_class):
+        server = self._server(mock_registry, mock_client_class, require_api_key=True)
+        with patch.object(server.server, "run") as mock_run:
+            server.run(transport="stdio")
+        mock_run.assert_called_once()
+        mock_uvicorn.run.assert_not_called()

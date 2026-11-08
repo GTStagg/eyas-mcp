@@ -27,6 +27,7 @@ Configure your CrowdStrike API credentials and server settings using environment
 | `FALCON_MCP_PORT` | `8000` | Port for HTTP transports |
 | `FALCON_MCP_STATELESS_HTTP` | `false` | Stateless mode for scalable deployments (required for AWS AgentCore) |
 | `FALCON_MCP_API_KEY` | — | API key for HTTP transport authentication |
+| `FALCON_MCP_REQUIRE_API_KEY` | `false` | Refuse to start an HTTP transport without an API key |
 | `FALCON_MCP_DYNAMIC` | `false` | [Dynamic mode](../usage/dynamic-mode.md): expose three tools instead of all module tools |
 | `FALCON_MCP_READ_ONLY` | `false` | Register only read-only tools ([tool restrictions](../usage/cli.md#restricting-the-tool-surface)) |
 | `FALCON_MCP_TOOLS` | — | Comma-separated allow-list of tool names, added to the enabled modules |
@@ -93,7 +94,8 @@ local host.
 Binding to a non-loopback address such as `--host 0.0.0.0` (or `FALCON_MCP_HOST=0.0.0.0`) exposes the
 server on the network. With no API key set, anyone who can reach the port can invoke every tool using
 your CrowdStrike credentials. The server logs a warning at startup when it binds beyond loopback
-without an API key (it does not refuse to start). Set `--api-key` whenever you bind beyond loopback:
+without an API key, but still starts, so existing deployments keep working. Set `--api-key` whenever
+you bind beyond loopback:
 
 ```bash
 eyas-mcp --transport streamable-http --host 0.0.0.0 --api-key your-secret-key
@@ -134,6 +136,10 @@ curl http://your-server:8000/mcp \
 
 - Keep the default loopback bind (`127.0.0.1`) for local single-machine use.
 - Set `--api-key` any time you bind to a non-loopback address or publish the port to a network.
-- Managed runtimes such as AWS Bedrock AgentCore and Google Cloud Run sit behind their own network
-  security layer (IAM, private networking), so the open-bind concern does not apply there. `--api-key`
-  remains available on those platforms as optional defense in depth.
+- On a managed runtime such as AWS Bedrock AgentCore or Google Cloud Run, the platform's own
+  authentication (IAM, private ingress) can stand in for `--api-key`, but only when it's configured to
+  require it. Hosting there doesn't restrict access by itself. Confirm that an unauthenticated request
+  from outside is rejected, and consider setting `--api-key` as well.
+- Add `--require-api-key` (or `FALCON_MCP_REQUIRE_API_KEY=true`) to make the server refuse to start an
+  HTTP transport without a key. It's off by default, so turning it on is a deliberate choice for
+  deployments that should never run open.
