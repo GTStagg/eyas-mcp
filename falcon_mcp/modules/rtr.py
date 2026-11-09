@@ -1,8 +1,9 @@
 """
 Real Time Response module for Falcon MCP Server.
 
-This module provides tools for initiating and inspecting RTR sessions and for
-executing read-only RTR commands during host investigations.
+This module provides tools for initiating and inspecting RTR sessions, for
+executing read-only RTR commands during host investigations, and for managing
+and running scripts from the tenant's custom RTR script library.
 """
 
 import json
@@ -76,6 +77,43 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 # RTR_ListFalconScripts returns nothing at all when limit is above 100.
 FALCON_SCRIPT_PAGE_SIZE = 100
 MAX_FALCON_SCRIPT_PAGES = 10
+
+# Custom script names go into an FQL filter (name:'...') and into the runscript
+# command (-CloudFile="..."), so only characters that can't end either are allowed.
+CUSTOM_SCRIPT_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}")
+MAX_CUSTOM_SCRIPT_BYTES = 1_000_000
+MAX_CUSTOM_SCRIPT_DESCRIPTION = 1000
+CUSTOM_SCRIPT_EXTENSIONS = {"windows": "ps1", "mac": "sh", "linux": "sh"}
+# Opaque Falcon IDs (scripts, command requests): letters, digits, `-` and `_` only.
+OPAQUE_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}")
+MAX_STATUS_REQUESTS = 100
+
+
+def _validate_custom_script_name(name: Any) -> str | None:
+    """Return why a custom script name is refused, or None when it is allowed."""
+    if not isinstance(name, str) or not CUSTOM_SCRIPT_NAME_PATTERN.fullmatch(name):
+        return (
+            f"Invalid script name {name!r}. Use 1-100 letters, digits, `.`, `_` or `-`, "
+            "starting with a letter or digit."
+        )
+    return None
+
+
+def _validate_opaque_ids(
+    values: list[str] | None, label: str, limit: int
+) -> tuple[list[str], str | None]:
+    """Deduplicate opaque Falcon IDs or return why they are refused."""
+    if not values:
+        return [], f"Provide at least one {label}."
+    clean: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or not OPAQUE_ID_PATTERN.fullmatch(value):
+            return [], f"Invalid {label} {value!r}."
+        if value not in clean:
+            clean.append(value)
+    if len(clean) > limit:
+        return [], f"Provide at most {limit} distinct values for {label}."
+    return clean, None
 
 
 def _validate_read_only_command(base_command: str, command_string: str | None) -> str | None:
@@ -368,6 +406,54 @@ class RTRModule(BaseModule):
                 idempotentHint=True,
                 openWorldHint=True,
             ),
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.search_custom_scripts,
+            name="search_rtr_scripts",
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.create_custom_script,
+            name="create_rtr_script",
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=False,
+                openWorldHint=True,
+            ),
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.delete_custom_scripts,
+            name="delete_rtr_scripts",
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=True,
+                idempotentHint=True,
+                openWorldHint=True,
+            ),
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.run_custom_script_on_hosts,
+            name="run_rtr_script_on_hosts",
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=True,
+                idempotentHint=False,
+                openWorldHint=True,
+            ),
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.check_admin_command_status,
+            name="check_rtr_admin_command_status",
         )
 
     def register_resources(self, server: FastMCP) -> None:
@@ -1125,6 +1211,374 @@ class RTRModule(BaseModule):
         if "error" not in result:
             result["script_name"] = script_name
         return result
+
+    def search_custom_scripts(
+        self,
+        filter: str | None = Field(
+            default=None,
+            description=(
+                "FQL filter on custom script fields such as `name`, `platform`, "
+                "`permission_type`, `created_by` and `modified_timestamp`."
+            ),
+            examples=["name:'collect-triage'", "platform:'windows'"],
+        ),
+        limit: int = Field(
+            default=50,
+            ge=1,
+            le=100,
+            description="Maximum number of scripts to return. Max: 100.",
+        ),
+        offset: int | None = Field(
+            default=None,
+            ge=0,
+            description="Starting index of the result set.",
+        ),
+        sort: str | None = Field(
+            default=None,
+            description="Sort by a script field, for example `modified_timestamp.desc`.",
+            examples=["modified_timestamp.desc", "name.asc"],
+        ),
+        include_content: bool = Field(
+            default=False,
+            description="Include each script's full text. Off by default to keep results small.",
+        ),
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Search the tenant's custom RTR script library.
+
+        Custom scripts are scripts your organization uploaded for RTR Admins to run with
+        `runscript -CloudFile`. They are separate from the CrowdStrike-published scripts
+        listed by falcon_list_falcon_scripts. Use this to find a script's exact name
+        before calling falcon_run_rtr_script_on_hosts, or to review what is in the
+        library. This only reads the library; it doesn't contact any host.
+        Responses include `pagination.total` (the total number of records matching the filter, or null when the API does not report a count) — use it to answer "how many" questions.
+        """
+        script_ids, pagination = self._base_search_with_meta(
+            operation="RTR_ListScripts",
+            search_params={
+                "filter": filter,
+                "limit": limit,
+                "offset": offset,
+                "sort": sort,
+            },
+            error_message="Failed to search RTR custom scripts",
+        )
+        if self._is_error(script_ids):
+            return script_ids
+        if not script_ids:
+            return self._build_pagination_envelope([], pagination, filter)
+
+        details = self._base_get_by_ids(
+            operation="RTR_GetScriptsV2",
+            ids=script_ids,
+            use_params=True,
+        )
+        if self._is_error(details):
+            return details
+
+        details = self._reorder_by_ids(script_ids, details, id_field="id")
+        if not include_content:
+            details = [
+                {key: value for key, value in script.items() if key != "content"}
+                for script in details
+                if isinstance(script, dict)
+            ]
+        return self._build_pagination_envelope(details, pagination, filter)
+
+    def create_custom_script(
+        self,
+        name: str = Field(
+            description=(
+                "Unique name for the script in the library, used later to run it. "
+                "1-100 letters, digits, `.`, `_` or `-`."
+            ),
+            examples=["collect-triage", "remove-anydesk"],
+        ),
+        content: str = Field(
+            description=(
+                "Full script text: PowerShell for Windows, shell for macOS and Linux. "
+                f"Max {MAX_CUSTOM_SCRIPT_BYTES} bytes."
+            ),
+        ),
+        platform: Literal["windows", "mac", "linux"] = Field(
+            default="windows",
+            description="Platform the script runs on.",
+        ),
+        permission_type: Literal["private", "group", "public"] = Field(
+            default="private",
+            description=(
+                "Who can run the script: `private` (only this API client), `group` "
+                "(all RTR Admins) or `public` (RTR Admins and Active Responders)."
+            ),
+        ),
+        description: str | None = Field(
+            default=None,
+            description=(
+                "Description shown in the script library. "
+                f"Max {MAX_CUSTOM_SCRIPT_DESCRIPTION} characters."
+            ),
+        ),
+        comments_for_audit_log: str | None = Field(
+            default=None,
+            description="Reason for the upload, recorded in the Falcon audit log.",
+        ),
+    ) -> dict[str, Any]:
+        """Upload a script to the tenant's custom RTR script library.
+
+        Use this to stage a script that falcon_run_rtr_script_on_hosts will run. Uploading
+        doesn't run anything, but anyone with the chosen permission can run the script
+        on hosts afterwards, so review the content first. Prefer `private` unless others
+        need it, and delete one-off scripts with falcon_delete_rtr_scripts once they've
+        run. Needs the RTR Admin write scope.
+        """
+        refusal = _validate_custom_script_name(name)
+        if refusal is None and (not isinstance(content, str) or not content.strip()):
+            refusal = "content must be non-empty script text."
+        if refusal is None and len(content.encode("utf-8")) > MAX_CUSTOM_SCRIPT_BYTES:
+            refusal = f"content is larger than {MAX_CUSTOM_SCRIPT_BYTES} bytes."
+        if refusal is None and description and len(description) > MAX_CUSTOM_SCRIPT_DESCRIPTION:
+            refusal = f"description is longer than {MAX_CUSTOM_SCRIPT_DESCRIPTION} characters."
+        if refusal:
+            return _format_error_response(refusal, operation="RTR_CreateScripts")
+
+        existing, error = self._find_custom_script(name)
+        if error is not None:
+            return {**error, "phase": "lookup"}
+        if existing is not None:
+            return _format_error_response(
+                f"A custom script named {name!r} already exists (id {existing.get('id')}). "
+                "Choose another name, or delete the existing script first.",
+                operation="RTR_CreateScripts",
+            )
+
+        form = prepare_api_parameters(
+            {
+                "name": name,
+                "platform": platform,
+                "permission_type": permission_type,
+                "description": description,
+                "comments_for_audit_log": comments_for_audit_log,
+            }
+        )
+        file_name = f"{name}.{CUSTOM_SCRIPT_EXTENSIONS[platform]}"
+        response = self.client.command(
+            "RTR_CreateScripts",
+            data=form,
+            files=[("file", (file_name, content.encode("utf-8"), "application/script"))],
+        )
+        status = response.get("status_code")
+        if status is None or status >= 300:
+            return handle_api_response(
+                response,
+                operation="RTR_CreateScripts",
+                error_message="Failed to upload RTR custom script",
+            )
+
+        created, error = self._find_custom_script(name)
+        if error is not None or created is None:
+            return {
+                "created": True,
+                "name": name,
+                "warning": "The script was uploaded, but looking it up afterwards failed.",
+                **({"lookup_error": error} if error else {}),
+            }
+        return {
+            "created": True,
+            "id": created.get("id"),
+            "name": name,
+            "platform": platform,
+            "permission_type": permission_type,
+        }
+
+    def delete_custom_scripts(
+        self,
+        ids: list[str] = Field(
+            description=(
+                "Custom script IDs to delete, from falcon_search_rtr_scripts. "
+                f"Max: {MAX_STATUS_REQUESTS}."
+            ),
+        ),
+    ) -> dict[str, Any]:
+        """Delete scripts from the tenant's custom RTR script library.
+
+        Use this to remove one-off scripts after they've run, or scripts nobody should
+        run any more. Deletion can't be undone. It doesn't affect commands already
+        sent to hosts. Needs the RTR Admin write scope.
+        """
+        script_ids, refusal = _validate_opaque_ids(ids, "script ID", MAX_STATUS_REQUESTS)
+        if refusal:
+            return _format_error_response(refusal, operation="RTR_DeleteScripts")
+
+        deleted: list[str] = []
+        failed: list[dict[str, Any]] = []
+        for script_id in script_ids:
+            response = self.client.command("RTR_DeleteScripts", parameters={"ids": script_id})
+            status = response.get("status_code")
+            if status is not None and status < 300:
+                deleted.append(script_id)
+            else:
+                error = handle_api_response(
+                    response,
+                    operation="RTR_DeleteScripts",
+                    error_message="Failed to delete RTR custom script",
+                )
+                failed.append({"id": script_id, "error": error})
+        return {"deleted": deleted, "failed": failed}
+
+    def run_custom_script_on_hosts(
+        self,
+        script_name: str = Field(
+            description=(
+                "Exact name of a script in the custom script library, as listed by "
+                "falcon_search_rtr_scripts. Case-sensitive."
+            ),
+        ),
+        device_ids: list[str] = Field(
+            description=(
+                "Host agent IDs (AIDs, 32 hex characters) to run the script on. "
+                f"Duplicates are dropped. Max: {MAX_BATCH_HOSTS}."
+            ),
+        ),
+        timeout_seconds: int = Field(
+            default=60,
+            ge=10,
+            le=300,
+            description=(
+                "Seconds to wait for sessions to open and again for hosts to finish. "
+                "Scripts still running afterwards keep running. Max: 300."
+            ),
+        ),
+    ) -> dict[str, Any]:
+        """Run a script from the custom RTR script library on one or more hosts.
+
+        This runs your organization's own code on the hosts with `runscript -CloudFile`,
+        so it can change anything on them. Only scripts already in the library can run;
+        upload one with falcon_create_rtr_script first. Hosts must be online: nothing is
+        queued, and hosts that can't be reached are listed under `failed_hosts`. Hosts
+        that haven't finished within the timeout keep running the script. Check them
+        later with falcon_check_rtr_admin_command_status and each host's `task_id`
+        rather than running the script again. Needs the RTR Admin scope; every run is
+        recorded in the RTR audit log.
+        """
+        refusal = _validate_custom_script_name(script_name)
+        if refusal:
+            return _format_error_response(refusal, operation="BatchAdminCmd")
+
+        hosts, refusal = _validate_device_ids(device_ids)
+        if refusal:
+            return _format_error_response(refusal, operation="BatchInitSessions")
+
+        script, error = self._find_custom_script(script_name)
+        if error is not None:
+            return {**error, "phase": "lookup"}
+        if script is None:
+            return _format_error_response(
+                f"No custom script named {script_name!r}. Use an exact name from "
+                "falcon_search_rtr_scripts, or upload one with falcon_create_rtr_script.",
+                operation="RTR_ListScripts",
+            )
+
+        batch = self._open_batch_sessions(hosts, timeout_seconds)
+        if "error" in batch:
+            return batch
+
+        result = self._run_batch_command(
+            operation="BatchAdminCmd",
+            batch=batch,
+            hosts=hosts,
+            base_command="runscript",
+            command_string=f'runscript -CloudFile="{script_name}"',
+            timeout_seconds=timeout_seconds,
+            parse_json=False,
+        )
+        if "error" in result:
+            return result
+
+        result["script_name"] = script_name
+        result["script_id"] = script.get("id")
+        for host in result["results"]:
+            if not host["complete"]:
+                host["warning"] = (
+                    "The script was still running when the timeout ended and may still be "
+                    "running. Check it with falcon_check_rtr_admin_command_status using this "
+                    "task_id; don't run the script again."
+                )
+        return result
+
+    def check_admin_command_status(
+        self,
+        cloud_request_ids: list[str] = Field(
+            description=(
+                "Command request IDs to check: the `task_id` of each host from "
+                "falcon_run_rtr_script_on_hosts or falcon_run_falcon_script. "
+                f"Max: {MAX_STATUS_REQUESTS}."
+            ),
+        ),
+    ) -> dict[str, Any]:
+        """Check whether RTR Admin commands sent to hosts have finished, and get their output.
+
+        Use this after falcon_run_rtr_script_on_hosts or falcon_run_falcon_script returns
+        hosts that hadn't finished within the timeout. It only reads command status; it
+        doesn't run anything again.
+        """
+        request_ids, refusal = _validate_opaque_ids(
+            cloud_request_ids, "cloud request ID", MAX_STATUS_REQUESTS
+        )
+        if refusal:
+            return _format_error_response(refusal, operation="RTR_CheckAdminCommandStatus")
+
+        results: list[dict[str, Any]] = []
+        for request_id in request_ids:
+            status = self._base_query_api_call(
+                operation="RTR_CheckAdminCommandStatus",
+                query_params={"cloud_request_id": request_id, "sequence_id": 0},
+                error_message="Failed to check RTR admin command status",
+            )
+            if isinstance(status, dict):
+                results.append({"cloud_request_id": request_id, "complete": False, **status})
+                continue
+            chunk = status[0] if isinstance(status, list) and status else {}
+            chunk = chunk if isinstance(chunk, dict) else {}
+            entry: dict[str, Any] = {
+                "cloud_request_id": request_id,
+                "complete": chunk.get("complete") is True,
+                "stdout": str(chunk.get("stdout") or ""),
+                "stderr": str(chunk.get("stderr") or ""),
+            }
+            if chunk.get("errors"):
+                entry["errors"] = chunk["errors"]
+            results.append(entry)
+
+        return {
+            "requested": len(request_ids),
+            "complete": sum(1 for r in results if r.get("complete")),
+            "results": results,
+        }
+
+    def _find_custom_script(
+        self, name: str
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Look up one custom script by exact name. Returns (script or None, error or None)."""
+        script_ids = self._base_search_api_call(
+            operation="RTR_ListScripts",
+            # The name pattern rules out quotes, so it can't end the FQL string.
+            search_params={"filter": f"name:'{name}'", "limit": 100},
+            error_message="Failed to look up RTR custom script",
+        )
+        if self._is_error(script_ids):
+            return None, script_ids
+        if not script_ids:
+            return None, None
+        details = self._base_get_by_ids(
+            operation="RTR_GetScriptsV2",
+            ids=script_ids,
+            use_params=True,
+        )
+        if self._is_error(details):
+            return None, details
+        for script in details:
+            if isinstance(script, dict) and script.get("name") == name:
+                return script, None
+        return None, None
 
     def _falcon_script_catalog(
         self, refresh: bool = False

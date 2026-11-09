@@ -39,6 +39,11 @@ class TestRTRModule(TestModules):
             "falcon_check_rtr_command_status",
             "falcon_list_rtr_session_files",
             "falcon_delete_rtr_session",
+            "falcon_search_rtr_scripts",
+            "falcon_create_rtr_script",
+            "falcon_delete_rtr_scripts",
+            "falcon_run_rtr_script_on_hosts",
+            "falcon_check_rtr_admin_command_status",
         ]
         self.assert_tools_registered(expected_tools)
 
@@ -1194,3 +1199,267 @@ class TestRTRReadOnlyMode(TestModules):
         self.assertIs(
             tools["falcon_run_rtr_read_only_command_on_hosts"].annotations.readOnlyHint, False
         )
+
+
+SCRIPT_IDS_RESPONSE = {"status_code": 200, "body": {"resources": ["script-1"]}}
+SCRIPT_DETAILS_RESPONSE = {
+    "status_code": 200,
+    "body": {
+        "resources": [
+            {
+                "id": "script-1",
+                "name": "collect-triage",
+                "platform": ["windows"],
+                "permission_type": "private",
+                "content": "Get-Process",
+            }
+        ]
+    },
+}
+EMPTY_IDS_RESPONSE = {"status_code": 200, "body": {"resources": []}}
+
+
+class TestRTRCustomScripts(TestModules):
+    """Custom script library tools and runscript."""
+
+    def setUp(self):
+        self.setup_module(RTRModule)
+
+    def test_registers_custom_script_tools_with_safe_hints(self):
+        server = FastMCP("rtr")
+        self.module.register_tools(server)
+        tools = server._tool_manager._tools
+
+        for name in ("falcon_search_rtr_scripts", "falcon_check_rtr_admin_command_status"):
+            self.assertEqual(tools[name].annotations, READ_ONLY_ANNOTATIONS)
+        self.assertEqual(
+            tools["falcon_create_rtr_script"].annotations,
+            ToolAnnotations(
+                readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
+            ),
+        )
+        self.assertEqual(
+            tools["falcon_delete_rtr_scripts"].annotations,
+            ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True
+            ),
+        )
+        self.assertEqual(
+            tools["falcon_run_rtr_script_on_hosts"].annotations,
+            ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
+            ),
+        )
+
+    def test_search_hides_content_by_default(self):
+        self.mock_client.command.side_effect = [SCRIPT_IDS_RESPONSE, SCRIPT_DETAILS_RESPONSE]
+
+        result = self.module.search_custom_scripts(
+            filter=None, limit=50, offset=None, sort=None, include_content=False
+        )
+
+        self.mock_client.command.assert_any_call(
+            "RTR_GetScriptsV2", parameters={"ids": ["script-1"]}
+        )
+        self.assertEqual(result["results"][0]["name"], "collect-triage")
+        self.assertNotIn("content", result["results"][0])
+
+    def test_search_can_include_content(self):
+        self.mock_client.command.side_effect = [SCRIPT_IDS_RESPONSE, SCRIPT_DETAILS_RESPONSE]
+
+        result = self.module.search_custom_scripts(
+            filter="platform:'windows'", limit=50, offset=None, sort=None, include_content=True
+        )
+
+        self.assertEqual(result["results"][0]["content"], "Get-Process")
+
+    def test_create_uploads_multipart_and_returns_id(self):
+        self.mock_client.command.side_effect = [
+            EMPTY_IDS_RESPONSE,
+            {"status_code": 200, "body": {"resources": []}},
+            SCRIPT_IDS_RESPONSE,
+            SCRIPT_DETAILS_RESPONSE,
+        ]
+
+        result = self.module.create_custom_script(
+            name="collect-triage",
+            content="Get-Process",
+            platform="windows",
+            permission_type="private",
+            description=None,
+            comments_for_audit_log="triage",
+        )
+
+        self.mock_client.command.assert_any_call(
+            "RTR_ListScripts", parameters={"filter": "name:'collect-triage'", "limit": 100}
+        )
+        self.mock_client.command.assert_any_call(
+            "RTR_CreateScripts",
+            data={
+                "name": "collect-triage",
+                "platform": "windows",
+                "permission_type": "private",
+                "comments_for_audit_log": "triage",
+            },
+            files=[("file", ("collect-triage.ps1", b"Get-Process", "application/script"))],
+        )
+        self.assertEqual(
+            result,
+            {
+                "created": True,
+                "id": "script-1",
+                "name": "collect-triage",
+                "platform": "windows",
+                "permission_type": "private",
+            },
+        )
+
+    def test_create_refuses_existing_name(self):
+        self.mock_client.command.side_effect = [SCRIPT_IDS_RESPONSE, SCRIPT_DETAILS_RESPONSE]
+
+        result = self.module.create_custom_script(
+            name="collect-triage",
+            content="Get-Process",
+            platform="windows",
+            permission_type="private",
+            description=None,
+            comments_for_audit_log=None,
+        )
+
+        self.assertIn("already exists", result["error"])
+        called = [c[0][0] for c in self.mock_client.command.call_args_list]
+        self.assertNotIn("RTR_CreateScripts", called)
+
+    def test_create_rejects_bad_input_without_api_calls(self):
+        for name, content in [
+            ('bad"name', "x"),
+            ("bad name", "x"),
+            ("-leading", "x"),
+            ("ok", "   "),
+            ("ok", "x" * (rtr.MAX_CUSTOM_SCRIPT_BYTES + 1)),
+        ]:
+            with self.subTest(name=name):
+                result = self.module.create_custom_script(
+                    name=name,
+                    content=content,
+                    platform="windows",
+                    permission_type="private",
+                    description=None,
+                    comments_for_audit_log=None,
+                )
+                self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()
+
+    def test_delete_reports_each_script(self):
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {}},
+            {"status_code": 404, "body": {"errors": [{"code": 404, "message": "not found"}]}},
+        ]
+
+        result = self.module.delete_custom_scripts(ids=["script-1", "script-2", "script-1"])
+
+        self.mock_client.command.assert_any_call(
+            "RTR_DeleteScripts", parameters={"ids": "script-1"}
+        )
+        self.assertEqual(result["deleted"], ["script-1"])
+        self.assertEqual(result["failed"][0]["id"], "script-2")
+        self.assertIn("error", result["failed"][0]["error"])
+
+    def test_delete_rejects_bad_ids(self):
+        result = self.module.delete_custom_scripts(ids=["id&ids=other"])
+        self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()
+
+    def test_run_script_uses_cloudfile(self):
+        self.mock_client.command.side_effect = [
+            SCRIPT_IDS_RESPONSE,
+            SCRIPT_DETAILS_RESPONSE,
+            INIT_RESPONSE,
+            _command_response("done"),
+        ]
+
+        result = self.module.run_custom_script_on_hosts(
+            script_name="collect-triage",
+            device_ids=[AID_ONLINE, AID_OFFLINE],
+            timeout_seconds=60,
+        )
+
+        self.mock_client.command.assert_any_call(
+            "BatchAdminCmd",
+            parameters={"timeout": 60, "host_timeout_duration": "55s"},
+            body={
+                "base_command": "runscript",
+                "batch_id": "batch-1",
+                "command_string": 'runscript -CloudFile="collect-triage"',
+                "optional_hosts": [AID_ONLINE],
+            },
+        )
+        self.assertEqual(result["script_id"], "script-1")
+        self.assertEqual(result["results"][0]["stdout"], "done")
+        self.assertEqual(result["failed_hosts"][0]["device_id"], AID_OFFLINE)
+
+    def test_run_script_warns_not_to_rerun_unfinished_hosts(self):
+        self.mock_client.command.side_effect = [
+            SCRIPT_IDS_RESPONSE,
+            SCRIPT_DETAILS_RESPONSE,
+            INIT_RESPONSE,
+            _command_response("", False),
+        ]
+
+        result = self.module.run_custom_script_on_hosts(
+            script_name="collect-triage", device_ids=[AID_ONLINE], timeout_seconds=30
+        )
+
+        host = result["results"][0]
+        self.assertEqual(host["task_id"], "task-1")
+        self.assertIn("falcon_check_rtr_admin_command_status", host["warning"])
+        self.assertIn("don't run the script again", host["warning"])
+
+    def test_run_script_refuses_unknown_script(self):
+        self.mock_client.command.side_effect = [EMPTY_IDS_RESPONSE]
+
+        result = self.module.run_custom_script_on_hosts(
+            script_name="missing", device_ids=[AID_ONLINE], timeout_seconds=30
+        )
+
+        self.assertIn("No custom script", result["error"])
+        called = [c[0][0] for c in self.mock_client.command.call_args_list]
+        self.assertNotIn("BatchInitSessions", called)
+
+    def test_run_script_ignores_name_prefix_matches(self):
+        self.mock_client.command.side_effect = [SCRIPT_IDS_RESPONSE, SCRIPT_DETAILS_RESPONSE]
+
+        result = self.module.run_custom_script_on_hosts(
+            script_name="collect", device_ids=[AID_ONLINE], timeout_seconds=30
+        )
+
+        self.assertIn("No custom script", result["error"])
+
+    def test_run_script_rejects_injection_without_api_calls(self):
+        for name in ['x" ; reboot', "x'", "x`", "x\n", "", "a b"]:
+            with self.subTest(name=name):
+                result = self.module.run_custom_script_on_hosts(
+                    script_name=name, device_ids=[AID_ONLINE], timeout_seconds=30
+                )
+                self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()
+
+    def test_check_admin_command_status(self):
+        self.mock_client.command.side_effect = [
+            {
+                "status_code": 200,
+                "body": {"resources": [{"complete": True, "stdout": "ok", "stderr": ""}]},
+            },
+            {"status_code": 200, "body": {"resources": [{"complete": False}]}},
+        ]
+
+        result = self.module.check_admin_command_status(cloud_request_ids=["task-1", "task-2"])
+
+        self.mock_client.command.assert_any_call(
+            "RTR_CheckAdminCommandStatus",
+            parameters={"cloud_request_id": "task-1", "sequence_id": 0},
+        )
+        self.assertEqual(result["requested"], 2)
+        self.assertEqual(result["complete"], 1)
+        self.assertEqual(result["results"][0]["stdout"], "ok")
+        self.assertFalse(result["results"][1]["complete"])

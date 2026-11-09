@@ -170,6 +170,13 @@ CASES: list[ReorderCase] = [
         site=("falcon_mcp/modules/rtr.py", "search_sessions"),
     ),
     ReorderCase(
+        tool="falcon_search_rtr_scripts",
+        module_cls=RTRModule,
+        method="search_custom_scripts",
+        id_field="id",
+        site=("falcon_mcp/modules/rtr.py", "search_custom_scripts"),
+    ),
+    ReorderCase(
         tool="falcon_search_zta_assessments",
         module_cls=ZeroTrustAssessmentModule,
         method="search_zta_assessments",

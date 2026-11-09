@@ -650,6 +650,21 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
     "falcon_delete_rtr_session": [
         "End the RTR session abc123",
     ],
+    "falcon_search_rtr_scripts": [
+        "Which custom RTR scripts are in our library for Windows?",
+    ],
+    "falcon_create_rtr_script": [
+        "Upload this PowerShell script to the RTR script library as collect-triage",
+    ],
+    "falcon_delete_rtr_scripts": [
+        "Delete the one-off collect-triage script from the RTR library",
+    ],
+    "falcon_run_rtr_script_on_hosts": [
+        "Run the collect-triage custom script on these two hosts",
+    ],
+    "falcon_check_rtr_admin_command_status": [
+        "Has the script finished on the hosts that timed out?",
+    ],
     # Zero Trust Assessment
     "falcon_search_zta_assessments": [
         "Which hosts have the weakest Zero Trust posture?",
