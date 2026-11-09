@@ -21,7 +21,6 @@ from falcon_mcp.resources.discover import (
     SEARCH_UNMANAGED_ASSETS_FQL_DOCUMENTATION,
 )
 
-
 # The applications query endpoint returns at most 100 IDs per call and refuses
 # offset + limit above 10,000. The entities endpoint takes at most 100 IDs.
 APPLICATION_PAGE_SIZE = 100
