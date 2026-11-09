@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from falcon_mcp.client import FalconClient
 from falcon_mcp.modules import guardian
+from falcon_mcp.modules.base import READ_ONLY_ANNOTATIONS
 from falcon_mcp.modules.guardian import GuardianModule, GuardianResponse
 from falcon_mcp.resources import guardian as guardian_resources
 from tests.modules.utils.test_modules import TestModules
@@ -93,6 +94,9 @@ class TestGuardianModuleRegistration(TestModules):
             "falcon_get_guardian_detection_scores",
             "falcon_search_guardian_installs",
             "falcon_search_guardian_models",
+            "falcon_get_guardian_entities",
+            "falcon_get_guardian_os_user",
+            "falcon_count_guardian_usage",
         ]
         self.assert_tools_registered(expected_tools)
 
@@ -3090,6 +3094,151 @@ class TestSecurity(GuardianToolTestCase):
             asyncio.run(
                 self.module.generate_guardian_report(report_type="agent_detail", agent_id="a' OR 1=1")
             )
+
+
+GUARDIAN_AID = "f" * 32
+
+
+def _aidr_ok(resources, pagination=None):
+    body: dict[str, Any] = {"resources": resources}
+    if pagination is not None:
+        body["meta"] = {"pagination": pagination}
+    return {"status_code": 200, "body": body}
+
+
+class TestGuardianLookupsAndUsage(TestModules):
+    """get_guardian_entities, get_guardian_os_user and count_guardian_usage."""
+
+    def setUp(self):
+        self.setup_module(GuardianModule)
+
+    def _route(self, call_index=-1):
+        call = self.mock_client.command.call_args_list[call_index]
+        return call[1]["override"], call[1]["parameters"]
+
+    def test_entities_route_per_type(self):
+        expected = {
+            "agent_sessions": "GET,/aidr/entities/agent-sessions/v1",
+            "tools": "GET,/aidr/entities/tools/v1",
+            "skills": "GET,/aidr/entities/skills/v1",
+            "model_names": "GET,/aidr/entities/model-names/v1",
+            "agent_installations": "GET,/aidr/entities/agent-installations/v1",
+        }
+        for entity_type, override in expected.items():
+            with self.subTest(entity_type=entity_type):
+                self.mock_client.command.reset_mock()
+                self.mock_client.command.return_value = _aidr_ok([{"Id": "x1"}])
+                result = self.module.get_guardian_entities(entity_type=entity_type, ids=["x1", "x2", "x1"])
+                route, params = self._route()
+                self.assertEqual(route, override)
+                self.assertEqual(params, {"ids": ["x1", "x2"]})
+                self.assertEqual(
+                    result,
+                    {"results": [{"Id": "x1"}], "requested": 2, "found": 1, "missing_ids": ["x2"]},
+                )
+
+    def test_entities_reject_bad_input_before_calling(self):
+        cases = [
+            {"entity_type": "agents", "ids": ["x"]},
+            {"entity_type": "tools", "ids": []},
+            {"entity_type": "tools", "ids": [""]},
+            {"entity_type": "tools", "ids": [f"id{i}" for i in range(101)]},
+        ]
+        for case in cases:
+            with self.subTest(case=str(case)[:60]):
+                result = self.module.get_guardian_entities(**case)
+                self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()
+
+    def test_entities_api_error_is_returned(self):
+        self.mock_client.command.return_value = {
+            "status_code": 403,
+            "body": {"errors": [{"code": 403, "message": "access denied"}]},
+        }
+        result = self.module.get_guardian_entities(entity_type="tools", ids=["x1"])
+        self.assertIn("error", result)
+
+    def test_os_user_lookup(self):
+        self.mock_client.command.return_value = _aidr_ok([{"Username": "alice"}])
+        result = self.module.get_guardian_os_user(aid=GUARDIAN_AID.upper(), username="alice")
+        route, params = self._route()
+        self.assertEqual(route, "GET,/aidr/entities/agent-os-users/v1")
+        self.assertEqual(params, {"aid": GUARDIAN_AID, "username": "alice"})
+        self.assertEqual(result["results"], [{"Username": "alice"}])
+
+    def test_os_user_rejects_bad_input(self):
+        self.assertIn("error", self.module.get_guardian_os_user(aid="not-an-aid", username="alice"))
+        self.assertIn("error", self.module.get_guardian_os_user(aid=GUARDIAN_AID, username=" "))
+        self.mock_client.command.assert_not_called()
+
+    def test_usage_counts_route_and_params(self):
+        for kind, override in (
+            ("tools", "GET,/aidr/aggregates/tool-usage/v1"),
+            ("skills", "GET,/aidr/aggregates/skill-usage/v1"),
+        ):
+            with self.subTest(kind=kind):
+                self.mock_client.command.reset_mock()
+                # The API returns every name, sorted by name, whatever limit says.
+                self.mock_client.command.return_value = _aidr_ok(
+                    [
+                        {"Name": "Bash", "count": "3"},
+                        {"Name": "Edit", "count": "51"},
+                        {"Name": "Read", "count": "12"},
+                    ]
+                )
+                result = self.module.count_guardian_usage(
+                    kind=kind, time_range="24h", session_id="sess-1", aid=GUARDIAN_AID, limit=2, offset=0
+                )
+                route, params = self._route()
+                self.assertEqual(route, override)
+                self.assertEqual(
+                    params,
+                    {"time_range": "24h", "session_id": "sess-1", "aid": GUARDIAN_AID, "limit": 500},
+                )
+                self.assertEqual([r["Name"] for r in result["results"]], ["Edit", "Read"])
+                self.assertEqual(
+                    result["pagination"], {"total": 3, "offset": 0, "limit": 2, "next_offset": 2}
+                )
+
+    def test_usage_defaults_omit_unset_filters(self):
+        self.mock_client.command.return_value = _aidr_ok([])
+        self.module.count_guardian_usage(kind="tools")
+        _, params = self._route()
+        self.assertEqual(params, {"time_range": "24h", "limit": 500})
+
+    def test_usage_pages_locally_and_flags_the_cap(self):
+        rows = [{"Name": f"t{i:03}", "count": str(i)} for i in range(500)]
+        self.mock_client.command.return_value = _aidr_ok(rows)
+        result = self.module.count_guardian_usage(kind="tools", limit=2, offset=1)
+        self.assertEqual([r["Name"] for r in result["results"]], ["t498", "t497"])
+        self.assertTrue(result["truncated"])
+        self.assertIsNone(result["pagination"]["total"])
+        self.assertTrue(result["notices"])
+
+    def test_usage_narrows_a_refused_window(self):
+        self.mock_client.command.side_effect = [
+            {"status_code": 504, "body": {"errors": [{"code": 504, "message": "timeout"}]}},
+            _aidr_ok([{"Name": "Bash", "count": 1}]),
+        ]
+        result = self.module.count_guardian_usage(kind="tools", time_range="7d")
+        self.assertEqual(result["results"], [{"Name": "Bash", "count": 1}])
+        self.assertTrue(result.get("notices"))
+        _, params = self._route()
+        self.assertNotEqual(params["time_range"], "7d")
+
+    def test_usage_rejects_bad_aid(self):
+        result = self.module.count_guardian_usage(kind="tools", aid="abc")
+        self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()
+
+    def test_new_tools_are_read_only(self):
+        self.module.register_tools(self.mock_server)
+        for name in (
+            "falcon_get_guardian_entities",
+            "falcon_get_guardian_os_user",
+            "falcon_count_guardian_usage",
+        ):
+            self.assert_tool_annotations(name, READ_ONLY_ANNOTATIONS)
 
 
 if __name__ == "__main__":

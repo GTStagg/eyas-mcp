@@ -7,6 +7,7 @@ from mcp.server.fastmcp.resources import TextResource
 from mcp.types import ToolAnnotations
 from pydantic import AnyUrl, Field
 
+from falcon_mcp.common.errors import _format_error_response, handle_api_response
 from falcon_mcp.common.logging import get_logger
 from falcon_mcp.modules.base import BaseModule
 from falcon_mcp.resources.shield import SHIELD_QUERY_DOCUMENTATION
@@ -112,6 +113,16 @@ class ShieldModule(BaseModule):
             server=server,
             method=self.get_shield_app_users,
             name="get_shield_app_users",
+        )
+        self._add_tool(
+            server=server,
+            method=self.search_shield_ai_agents,
+            name="search_shield_ai_agents",
+        )
+        self._add_tool(
+            server=server,
+            method=self.get_shield_ai_agent,
+            name="get_shield_ai_agent",
         )
         self._add_tool(
             server=server,
@@ -658,6 +669,107 @@ class ShieldModule(BaseModule):
             },
             error_message="Failed to search Shield apps",
         )
+
+    def search_shield_ai_agents(
+        self,
+        name: str | None = Field(
+            default=None,
+            description="Agent name, partial match.",
+        ),
+        integration_id: str | None = Field(
+            default=None,
+            description=(
+                "Comma-separated IDs of SaaS integrations to filter by."
+                " Use `get_shield_integrations` to retrieve available integration IDs."
+            ),
+        ),
+        access: str | None = Field(
+            default=None,
+            description="Access value, exact match.",
+        ),
+        agent_owner: str | None = Field(
+            default=None,
+            description="Owner email, partial match.",
+        ),
+        tool_type: str | None = Field(
+            default=None,
+            description="A single tool type the agent uses.",
+        ),
+        knowledge_source: str | None = Field(
+            default=None,
+            description="A single knowledge source the agent uses.",
+        ),
+        limit: int = Field(
+            default=10,
+            ge=1,
+            description="Maximum number of results to return (default: 10).",
+        ),
+        offset: int | None = Field(
+            default=None,
+            description=(
+                "Zero-based offset for pagination. Omit or set to 0 for the first page."
+                " Increment by limit for subsequent pages."
+            ),
+        ),
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """List AI agents built in connected SaaS platforms, such as copilots and custom agents.
+
+        Use this to audit which AI agents exist across your SaaS estate, who owns them,
+        what access they have, and which tools and knowledge sources they use. These are
+        agents defined inside SaaS apps, which Falcon Shield (SaaS Security) monitors;
+        AI agents running on endpoints are covered by the Guardian tools instead. Pass a
+        result's item ID to `get_shield_ai_agent` for full details.
+        """
+        return self._search_with_docs(
+            operation="GetAiAgentsInventory",
+            search_params={
+                "name": name,
+                "integration_id": integration_id,
+                "access": access,
+                "agent_owner": agent_owner,
+                "tool_type": tool_type,
+                "knowledge_source": knowledge_source,
+                "limit": limit,
+                "offset": offset,
+            },
+            error_message="Failed to search Shield AI agents",
+        )
+
+    def get_shield_ai_agent(
+        self,
+        id: str = Field(
+            description=(
+                "The agent's item ID from `search_shield_ai_agents`, in the form "
+                "'agent_id|||integration_id'."
+            ),
+        ),
+    ) -> dict[str, Any]:
+        """Get full details for one AI agent built in a connected SaaS platform.
+
+        Returns the agent's configuration, owner, access, tools and knowledge sources.
+        Find agents and their item IDs with `search_shield_ai_agents`.
+        """
+        if not isinstance(id, str) or "|||" not in id or len(id) > 1024:
+            return _format_error_response(
+                "id must be an item ID from search_shield_ai_agents, in the form "
+                "'agent_id|||integration_id'.",
+                operation="GetAiAgentDetails",
+            )
+        response = self.client.command("GetAiAgentDetails", parameters={"id": id})
+        result = handle_api_response(
+            response,
+            operation="GetAiAgentDetails",
+            error_message="Failed to get Shield AI agent details",
+            default_result=[],
+        )
+        if self._is_error(result):
+            return result
+        resources = result if isinstance(result, list) else []
+        if not resources:
+            return _format_error_response(
+                f"No AI agent found with id {id!r}.", operation="GetAiAgentDetails"
+            )
+        return {"result": resources[0]}
 
     def get_shield_app_users(
         self,

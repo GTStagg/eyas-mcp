@@ -162,6 +162,8 @@ API_SCOPE_REQUIREMENTS = {
     "GetUserInventoryV3": ["SaaS Security:read"],
     "GetDeviceInventoryV3": ["SaaS Security:read"],
     "GetAppInventory": ["SaaS Security:read"],
+    "GetAiAgentsInventory": ["SaaS Security:read"],
+    "GetAiAgentDetails": ["SaaS Security:read"],
     "GetAppInventoryUsers": ["SaaS Security:read"],
     "GetAssetInventoryV3": ["SaaS Security:read"],
     "GetIntegrationsV3": ["SaaS Security:read"],

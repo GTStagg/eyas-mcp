@@ -19,7 +19,7 @@ class TestShieldModule(TestModules):
     # --- Registration tests ---
 
     def test_register_tools(self):
-        """Test registering all 16 tools with the server."""
+        """Test registering all 18 tools with the server."""
         expected_tools = [
             "falcon_search_shield_checks",
             "falcon_get_shield_check_affected_entities",
@@ -31,6 +31,8 @@ class TestShieldModule(TestModules):
             "falcon_search_shield_devices",
             "falcon_search_shield_apps",
             "falcon_get_shield_app_users",
+            "falcon_search_shield_ai_agents",
+            "falcon_get_shield_ai_agent",
             "falcon_search_shield_data_shares",
             "falcon_get_shield_integrations",
             "falcon_get_shield_system_users",
@@ -648,6 +650,85 @@ class TestShieldModule(TestModules):
             call_args[1]["parameters"]["check_type"], "Falcon Shield Security Check"
         )
         self.assertEqual(len(result["results"]), 1)
+
+
+class TestShieldAiAgents(TestModules):
+    """search_shield_ai_agents and get_shield_ai_agent."""
+
+    def setUp(self):
+        self.setup_module(ShieldModule)
+
+    def test_are_read_only(self):
+        self.module.register_tools(self.mock_server)
+        self.assert_tool_annotations("falcon_search_shield_ai_agents", READ_ONLY_ANNOTATIONS)
+        self.assert_tool_annotations("falcon_get_shield_ai_agent", READ_ONLY_ANNOTATIONS)
+
+    def test_search_passes_filters(self):
+        self.mock_client.command.return_value = {
+            "status_code": 200,
+            "body": {
+                "resources": [{"id": "a1|||int1", "name": "HR copilot"}],
+                "meta": {"pagination": {"total": 1, "offset": 0, "limit": 10}},
+            },
+        }
+        result = self.module.search_shield_ai_agents(
+            name="copilot",
+            integration_id="int1,int2",
+            access="public",
+            agent_owner="owner@example.com",
+            tool_type="web",
+            knowledge_source="sharepoint",
+            limit=10,
+            offset=0,
+        )
+        call = self.mock_client.command.call_args
+        self.assertEqual(call[0][0], "GetAiAgentsInventory")
+        self.assertEqual(
+            call[1]["parameters"],
+            {
+                "name": "copilot",
+                "integration_id": "int1,int2",
+                "access": "public",
+                "agent_owner": "owner@example.com",
+                "tool_type": "web",
+                "knowledge_source": "sharepoint",
+                "limit": 10,
+                "offset": 0,
+            },
+        )
+        self.assertEqual(result["results"], [{"id": "a1|||int1", "name": "HR copilot"}])
+        self.assertEqual(result["pagination"]["total"], 1)
+
+    def test_search_empty_adds_guide(self):
+        self.mock_client.command.return_value = {"status_code": 200, "body": {"resources": []}}
+        result = self.module.search_shield_ai_agents(limit=10)
+        self.assertEqual(result["results"], [])
+        self.assertIn("query_guide", result)
+
+    def test_get_details(self):
+        self.mock_client.command.return_value = {
+            "status_code": 200,
+            "body": {"resources": [{"id": "a1|||int1", "tools": ["web"]}]},
+        }
+        result = self.module.get_shield_ai_agent(id="a1|||int1")
+        call = self.mock_client.command.call_args
+        self.assertEqual(call[0][0], "GetAiAgentDetails")
+        self.assertEqual(call[1]["parameters"], {"id": "a1|||int1"})
+        self.assertEqual(result, {"result": {"id": "a1|||int1", "tools": ["web"]}})
+
+    def test_get_details_rejects_malformed_id(self):
+        result = self.module.get_shield_ai_agent(id="a1")
+        self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()
+
+    def test_get_details_not_found_and_errors(self):
+        self.mock_client.command.return_value = {"status_code": 200, "body": {"resources": []}}
+        self.assertIn("error", self.module.get_shield_ai_agent(id="a1|||int1"))
+        self.mock_client.command.return_value = {
+            "status_code": 403,
+            "body": {"errors": [{"code": 403, "message": "denied"}]},
+        }
+        self.assertIn("error", self.module.get_shield_ai_agent(id="a1|||int1"))
 
 
 if __name__ == "__main__":
