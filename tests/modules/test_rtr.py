@@ -3,6 +3,7 @@ Tests for the RTR module.
 """
 
 import json
+from typing import Any
 from unittest.mock import patch
 
 from mcp.server.fastmcp import FastMCP
@@ -1473,7 +1474,9 @@ class TestRTRWaitForSessions(TestModules):
         self.setup_module(RTRModule)
 
     def _init(self, connected: list[str], failed: list[str]) -> dict:
-        resources = {aid: {"session_id": f"s-{aid[0]}", "errors": []} for aid in connected}
+        resources: dict[str, dict[str, Any]] = {
+            aid: {"session_id": f"s-{aid[0]}", "errors": []} for aid in connected
+        }
         resources.update(
             {aid: {"session_id": "", "errors": [{"code": 404, "message": "x"}]} for aid in failed}
         )
