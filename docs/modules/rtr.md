@@ -8,6 +8,7 @@ Initiating and inspecting RTR sessions, for executing read-only RTR commands dur
 
 ## API Scopes
 
+- `Hosts:read`
 - `Real time response:read`
 - `real-time-response-audit:read`
 - `Real time response (admin):write`
@@ -257,16 +258,19 @@ Use this when investigation is complete to free up session resources.
 > [!NOTE]
 > This tool modifies data.
 
-**Required scopes:** `Real time response:read`
+**Required scopes:** `Hosts:read`, `Real time response:read`, `Real time response (admin):write`
 
 Wait until hosts accept RTR sessions, retrying until they do or time runs out.
 
 Use this after a change that briefly blocks RTR on a host, such as moving it into
 a new host group or policy, or a reboot, before running RTR commands or scripts.
 Each attempt opens an RTR batch session on the hosts that aren't ready yet; the
-first attempt is immediate. It runs no commands, and the sessions expire on their
-own. Returns `ready` (true when every host connected), the hosts that connected
-with their session IDs, and the last error for hosts that never did.
+first attempt is immediate. By default it runs no commands, and the sessions
+expire on their own. With probe='runscript' a host counts as ready only once a
+harmless probe script actually runs on it, which is the check to use before
+falcon_run_rtr_script_on_hosts. Returns `ready` (true when every host is ready),
+the ready hosts with their session IDs, and the last error for hosts that never
+got there.
 
 **Example prompts:**
 

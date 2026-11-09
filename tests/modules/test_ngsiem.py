@@ -1673,5 +1673,58 @@ class TestSearchNgsiemBounded(TestModules):
         self.assertNotIn("partial", result)
 
 
+class TestProcessNodeContract(unittest.TestCase):
+    """Process-tree node fields are a stable contract for callers that classify trees."""
+
+    def test_node_field_names_and_sources(self):
+        from falcon_mcp.modules.ngsiem import _process_node, _public_node
+
+        node = _public_node(
+            _process_node(
+                {
+                    "@timestamp": 1_700_000_000_000,
+                    "TargetProcessId": "111",
+                    "ParentProcessId": "222",
+                    "RawProcessId": "4321",
+                    "ImageFileName": r"\Device\HarddiskVolume3\Windows\System32\cmd.exe",
+                    "CommandLine": "cmd.exe /c whoami",
+                    "UserName": "alice",
+                    "UserSid": "S-1-5-21-1",
+                    "SHA256HashData": "ab" * 32,
+                    "ProcessStartTime": 1_699_999_999.5,
+                }
+            )
+        )
+        self.assertEqual(
+            node,
+            {
+                "process_id": "111",
+                "parent_process_id": "222",
+                "os_pid": "4321",
+                "image": r"\Device\HarddiskVolume3\Windows\System32\cmd.exe",
+                "command_line": "cmd.exe /c whoami",
+                "user_name": "alice",
+                "user_sid": "S-1-5-21-1",
+                "sha256": "ab" * 32,
+                "process_start_time": "2023-11-14T22:13:19.500000Z",
+                "timestamp": "2023-11-14T22:13:20Z",
+            },
+        )
+
+    def test_missing_values_are_null_not_absent(self):
+        from falcon_mcp.modules.ngsiem import _process_node, _public_node
+
+        node = _public_node(_process_node({"TargetProcessId": "1"}))
+        self.assertEqual(
+            set(node),
+            {
+                "process_id", "parent_process_id", "os_pid", "image", "command_line",
+                "user_name", "user_sid", "sha256", "process_start_time", "timestamp",
+            },
+        )
+        self.assertIsNone(node["parent_process_id"])
+        self.assertIsNone(node["timestamp"])
+
+
 if __name__ == "__main__":
     unittest.main()
