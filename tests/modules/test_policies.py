@@ -84,6 +84,7 @@ class TestPoliciesModule(TestModules):
         expected_tools = [
             "falcon_search_policies",
             "falcon_search_policy_members",
+            "falcon_get_prevention_posture",
             "falcon_create_policy",
             "falcon_update_policy",
             "falcon_delete_policies",
@@ -1024,3 +1025,132 @@ class TestPoliciesModule(TestModules):
         )
         self.assertIn("error", result[0])
         self.assertEqual(self.mock_client.command.call_count, 0)
+
+
+def _prevention_policy(
+    policy_id: str,
+    name: str,
+    platform: str = "Windows",
+    enabled: bool = True,
+    groups: list | None = None,
+    detection: str = "AGGRESSIVE",
+    prevention: str = "AGGRESSIVE",
+) -> dict:
+    return {
+        "id": policy_id,
+        "name": name,
+        "platform_name": platform,
+        "enabled": enabled,
+        "groups": groups if groups is not None else [{"id": "g1", "name": "Servers"}],
+        "prevention_settings": [
+            {
+                "name": "Machine Learning",
+                "settings": [
+                    {
+                        "id": "CloudAntiMalware",
+                        "type": "mlslider",
+                        "value": {"detection": detection, "prevention": prevention},
+                    },
+                    {"id": "QuarantineOnWrite", "type": "toggle", "value": {"enabled": True}},
+                    {"id": "ScriptBasedExecution", "type": "toggle", "value": {"enabled": False}},
+                ],
+            }
+        ],
+    }
+
+
+class TestPreventionPosture(TestModules):
+    """falcon_get_prevention_posture summarizes prevention policies."""
+
+    def setUp(self):
+        self.setup_module(PoliciesModule)
+
+    def test_is_read_only(self):
+        self.module.register_tools(self.mock_server)
+        self.assert_tool_annotations("falcon_get_prevention_posture", READ_ONLY_ANNOTATIONS)
+
+    def test_flags_and_summary(self):
+        self.mock_client.command.return_value = {
+            "status_code": 200,
+            "body": {
+                "resources": [
+                    _prevention_policy("p1", "Blocking"),
+                    _prevention_policy("p2", "Detect only", prevention="DISABLED"),
+                    _prevention_policy("p3", "Off", platform="Mac", enabled=False, groups=[]),
+                    _prevention_policy("p4", "platform_default", groups=[]),
+                ]
+            },
+        }
+
+        result = self.module.get_prevention_posture(platform=None, only_flagged=False)
+
+        self.mock_client.command.assert_called_once_with(
+            "queryCombinedPreventionPolicies",
+            parameters={"filter": "enabled:true,enabled:false", "limit": 500, "offset": 0},
+        )
+        rows = {row["id"]: row for row in result["policies"]}
+        self.assertEqual(rows["p1"]["flags"], [])
+        self.assertEqual(rows["p2"]["flags"], ["detect_only_sliders"])
+        self.assertEqual(rows["p2"]["detect_only_sliders"], ["CloudAntiMalware"])
+        self.assertEqual(rows["p3"]["flags"], ["disabled", "no_host_groups"])
+        self.assertEqual(rows["p4"]["flags"], [])
+        self.assertEqual(rows["p1"]["toggles_enabled"], 1)
+        self.assertEqual(rows["p1"]["toggles_total"], 2)
+        self.assertEqual(
+            rows["p1"]["ml_sliders"],
+            {"CloudAntiMalware": {"detection": "AGGRESSIVE", "prevention": "AGGRESSIVE"}},
+        )
+        self.assertEqual(
+            result["summary"],
+            {
+                "policies": 4,
+                "by_platform": {"Windows": 3, "Mac": 1},
+                "flagged": 2,
+                "by_flag": {"disabled": 1, "no_host_groups": 1, "detect_only_sliders": 1},
+            },
+        )
+
+    def test_platform_filter_and_only_flagged(self):
+        self.mock_client.command.return_value = {
+            "status_code": 200,
+            "body": {
+                "resources": [
+                    _prevention_policy("p1", "Blocking", platform="Linux"),
+                    _prevention_policy("p2", "Off", platform="Linux", enabled=False),
+                ]
+            },
+        }
+
+        result = self.module.get_prevention_posture(platform="linux", only_flagged=True)
+
+        self.assertEqual(
+            self.mock_client.command.call_args[1]["parameters"]["filter"],
+            "platform_name:'Linux'",
+        )
+        self.assertEqual([row["id"] for row in result["policies"]], ["p2"])
+        self.assertEqual(result["summary"]["policies"], 2)
+
+    def test_pages_past_one_request(self):
+        page = [_prevention_policy(f"p{i}", f"P{i}") for i in range(500)]
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"resources": page}},
+            {"status_code": 200, "body": {"resources": [_prevention_policy("last", "Last")]}},
+        ]
+
+        result = self.module.get_prevention_posture(platform=None, only_flagged=False)
+
+        self.assertEqual(self.mock_client.command.call_args[1]["parameters"]["offset"], 500)
+        self.assertEqual(result["summary"]["policies"], 501)
+
+    def test_rejects_unknown_platform(self):
+        result = self.module.get_prevention_posture(platform="solaris", only_flagged=False)
+        self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()
+
+    def test_returns_api_errors(self):
+        self.mock_client.command.return_value = {
+            "status_code": 403,
+            "body": {"errors": [{"code": 403, "message": "denied"}]},
+        }
+        result = self.module.get_prevention_posture(platform=None, only_flagged=False)
+        self.assertIn("error", result)

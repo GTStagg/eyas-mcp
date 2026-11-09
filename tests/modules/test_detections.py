@@ -24,6 +24,7 @@ class TestDetectionsModule(TestModules):
             "falcon_get_detection_details",
             "falcon_aggregate_detections",
             "falcon_update_detections",
+            "falcon_close_host_detections",
         ]
         self.assert_tools_registered(expected_tools)
 
@@ -1654,3 +1655,115 @@ class TestDetectionsModule(TestModules):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+HOST_AID = "c" * 32
+
+
+class TestCloseHostDetections(TestModules):
+    """falcon_close_host_detections closes everything open on one host."""
+
+    def setUp(self):
+        self.setup_module(DetectionsModule)
+
+    def test_has_destructive_hints(self):
+        self.module.register_tools(self.mock_server)
+        self.assert_tool_annotations(
+            "falcon_close_host_detections",
+            ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True
+            ),
+        )
+
+    def test_closes_open_detections_with_resolution(self):
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"resources": ["d1", "d2"]}},
+            {"status_code": 200, "body": {"resources": []}},
+        ]
+
+        result = self.module.close_host_detections(
+            device_id=HOST_AID.upper(), resolution="true_positive", comment="cleaned up"
+        )
+
+        self.mock_client.command.assert_any_call(
+            "GetQueriesAlertsV2",
+            parameters={
+                "filter": (
+                    f"device.device_id:'{HOST_AID}'+status:['new','in_progress','reopened']"
+                ),
+                "limit": 1000,
+                "offset": 0,
+                "include_hidden": True,
+            },
+        )
+        patch_call = self.mock_client.command.call_args_list[1]
+        self.assertEqual(patch_call[0][0], "PatchEntitiesAlertsV3")
+        self.assertEqual(patch_call[1]["body"]["composite_ids"], ["d1", "d2"])
+        self.assertEqual(
+            patch_call[1]["body"]["action_parameters"],
+            [
+                {"name": "update_status", "value": "closed"},
+                {"name": "add_tag", "value": "true_positive"},
+                {"name": "append_comment", "value": "cleaned up"},
+            ],
+        )
+        self.assertEqual(result["found"], 2)
+        self.assertEqual(result["closed"], 2)
+        self.assertEqual(result["composite_ids"], ["d1", "d2"])
+
+    def test_nothing_open_makes_no_update(self):
+        self.mock_client.command.return_value = {"status_code": 200, "body": {"resources": []}}
+
+        result = self.module.close_host_detections(
+            device_id=HOST_AID, resolution="false_positive", comment=None
+        )
+
+        self.assertEqual(result["found"], 0)
+        self.assertEqual(result["closed"], 0)
+        self.assertEqual(self.mock_client.command.call_count, 1)
+
+    def test_pages_through_large_hosts(self):
+        first = [f"a{i}" for i in range(1000)]
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"resources": first}},
+            {"status_code": 200, "body": {"resources": ["b1"]}},
+            {"status_code": 200, "body": {"resources": []}},
+            {"status_code": 200, "body": {"resources": []}},
+        ]
+
+        result = self.module.close_host_detections(
+            device_id=HOST_AID, resolution="ignored", comment=None
+        )
+
+        self.assertEqual(self.mock_client.command.call_args_list[1][1]["parameters"]["offset"], 1000)
+        self.assertEqual(result["found"], 1001)
+        self.assertEqual(result["closed"], 1001)
+
+    def test_reports_remaining_ids_when_close_fails(self):
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"resources": ["d1"]}},
+            {"status_code": 403, "body": {"errors": [{"code": 403, "message": "denied"}]}},
+        ]
+
+        result = self.module.close_host_detections(
+            device_id=HOST_AID, resolution="true_positive", comment=None
+        )
+
+        self.assertIn("error", result)
+        self.assertEqual(result["phase"], "close")
+        self.assertEqual(result["failed_and_remaining_ids"], ["d1"])
+        self.assertEqual(result["closed"], 0)
+
+    def test_rejects_bad_input_without_api_calls(self):
+        for device_id, resolution, comment in [
+            ("abc", "true_positive", None),
+            (HOST_AID + "'+status:'closed", "true_positive", None),
+            (HOST_AID, "resolved", None),
+            (HOST_AID, "true_positive", "   "),
+        ]:
+            with self.subTest(device_id=device_id, resolution=resolution):
+                result = self.module.close_host_detections(
+                    device_id=device_id, resolution=resolution, comment=comment
+                )
+                self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()

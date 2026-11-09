@@ -252,6 +252,26 @@ Use this when investigation is complete to free up session resources.
 
 - "End the RTR session abc123"
 
+### `falcon_wait_for_rtr_sessions`
+
+> [!NOTE]
+> This tool modifies data.
+
+**Required scopes:** `Real time response:read`
+
+Wait until hosts accept RTR sessions, retrying until they do or time runs out.
+
+Use this after a change that briefly blocks RTR on a host, such as moving it into
+a new host group or policy, or a reboot, before running RTR commands or scripts.
+Each attempt opens an RTR batch session on the hosts that aren't ready yet; the
+first attempt is immediate. It runs no commands, and the sessions expire on their
+own. Returns `ready` (true when every host connected), the hosts that connected
+with their session IDs, and the last error for hosts that never did.
+
+**Example prompts:**
+
+- "Wait until host abc123 accepts RTR again after moving it into the new group"
+
 ### `falcon_search_rtr_scripts`
 
 **Required scopes:** `Real time response (admin):write`

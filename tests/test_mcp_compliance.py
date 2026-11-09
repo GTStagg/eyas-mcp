@@ -61,6 +61,7 @@ MUTATING_TOOL_ALLOWLIST: set[str] = {
     "falcon_run_falcon_script",
     "falcon_create_rtr_script",
     "falcon_delete_rtr_scripts",
+    "falcon_wait_for_rtr_sessions",
     "falcon_run_rtr_script_on_hosts",
     # shield module
     "falcon_dismiss_shield_check",
@@ -96,6 +97,7 @@ MUTATING_TOOL_ALLOWLIST: set[str] = {
     "falcon_set_policy_precedence",
     # detections module
     "falcon_update_detections",
+    "falcon_close_host_detections",
     # data_security module
     "falcon_create_data_security_entity",
     "falcon_update_data_security_entity",
