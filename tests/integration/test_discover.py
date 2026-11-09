@@ -25,7 +25,7 @@ class TestDiscoverIntegration(BaseIntegrationTest):
         """Test that search_applications returns full application details.
 
         Validates the combined_applications operation name is correct.
-        Note: filter is required for this endpoint.
+        name:*'*' is the wildcard filter that matches every application.
         """
         result = self.call_method(
             self.module.search_applications,
@@ -67,6 +67,26 @@ class TestDiscoverIntegration(BaseIntegrationTest):
 
         self.assert_no_error(result, context="search_applications with facet")
         self.assert_valid_list_response(result, min_length=0, context="search_applications with facet")
+
+    def test_search_applications_without_filter_counts_everything(self):
+        """With no filter, the total matches the query endpoint's unfiltered count."""
+        result = self.call_method(
+            self.module.search_applications,
+            sort="last_used_timestamp.desc",
+            limit=5,
+            fields="compact",
+        )
+
+        self.assert_no_error(result, context="search_applications without filter")
+        query = self.module.client.command("query_applications", parameters={"limit": 1})
+        query_total = query["body"]["meta"]["pagination"]["total"]
+        # Applications are discovered continuously, so allow a little drift between calls.
+        assert abs(result["pagination"]["total"] - query_total) <= max(100, query_total // 1000)
+        for row in self.records(result, context="search_applications without filter"):
+            assert set(row) == {
+                "id", "name", "vendor", "version", "software_type", "is_suspicious",
+                "installation_paths", "last_used_timestamp", "host",
+            }
 
     def test_search_unmanaged_assets_returns_details(self):
         """Test that search_unmanaged_assets returns full asset details.

@@ -384,6 +384,16 @@ CASES: list[ReorderCase] = [
         get_patch="client.command",
         site=("falcon_mcp/modules/discover.py", "search_accounts"),
     ),
+    # With no filter, applications are listed through the query and entities endpoints.
+    ReorderCase(
+        tool="falcon_search_applications",
+        module_cls=DiscoverModule,
+        method="search_applications",
+        id_field="id",
+        query_patch="client.command",
+        get_patch="client.command",
+        site=("falcon_mcp/modules/discover.py", "_list_all_applications"),
+    ),
     # The "query" step is the device record, whose `groups` field lists the IDs the
     # group details are reordered against.
     ReorderCase(
