@@ -24,6 +24,7 @@ from mcp.server import FastMCP
 from mcp.server.fastmcp.resources import TextResource
 from pydantic import AnyUrl, Field
 
+from falcon_mcp.common.cql_lint import lint_cql
 from falcon_mcp.common.errors import _format_error_response, handle_api_response
 from falcon_mcp.common.logging import get_logger
 from falcon_mcp.common.utils import unwrap_field_default
@@ -57,6 +58,12 @@ _CQL_UNSCANNED_ZERO_HINT = (
 # Configurable polling settings
 POLL_INTERVAL_SECONDS = int(os.environ.get("FALCON_MCP_NGSIEM_POLL_INTERVAL", "5"))
 TIMEOUT_SECONDS = int(os.environ.get("FALCON_MCP_NGSIEM_TIMEOUT", "300"))
+
+# Bounds for the optional per-call settings on falcon_search_ngsiem.
+MAX_HOURS_BACK = 24 * 90
+MIN_TIME_BUDGET_SECONDS = 10
+MAX_TIME_BUDGET_SECONDS = 290
+MAX_ROWS_LIMIT = 10_000
 
 # `repository` is the only caller-supplied value in this server that reaches a URL
 # path variable (/humio/api/v1/repositories/{repository}/queryjobs). FalconPy
@@ -132,6 +139,36 @@ def _iso_to_epoch_ms(iso_timestamp: str) -> int:
     """
     dt = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
     return int(dt.timestamp() * 1000)
+
+
+def _resolve_search_window(
+    start: str | None,
+    end: str | None,
+    hours_back: float | None,
+) -> dict[str, Any]:
+    """Turn start/end or hours_back into epoch milliseconds, or an error response."""
+    if start is not None and hours_back is not None:
+        return _format_error_response(
+            "Pass start or hours_back, not both.", operation="StartSearchV1"
+        )
+    try:
+        end_ms = _iso_to_epoch_ms(end) if isinstance(end, str) else None
+        if isinstance(start, str):
+            start_ms = _iso_to_epoch_ms(start)
+        elif hours_back is not None:
+            anchor_ms = end_ms if end_ms is not None else int(time.time() * 1000)
+            start_ms = anchor_ms - int(float(hours_back) * 3_600_000)
+        else:
+            return _format_error_response(
+                "Pass start (an ISO 8601 timestamp) or hours_back.",
+                operation="StartSearchV1",
+            )
+    except ValueError as exc:
+        return _format_error_response(
+            f"Invalid timestamp: {exc}. Use ISO 8601, for example 2025-01-01T00:00:00Z.",
+            operation="StartSearchV1",
+        )
+    return {"start_ms": start_ms, "end_ms": end_ms}
 
 
 def _epoch_ms_to_iso(epoch_ms: Any) -> str | None:
@@ -736,6 +773,8 @@ class _SearchJobOutcome:
     job_id: str | None = None
     timed_out: bool = False
     stop_status_code: Any = None
+    # Rows the last status poll returned before the job was stopped.
+    partial_events: list[dict[str, Any]] | None = None
 
 
 class NGSIEMModule(BaseModule):
@@ -929,10 +968,11 @@ class NGSIEMModule(BaseModule):
                 "`falcon://ngsiem/search/cql-guide` — it has working examples."
             ),
         ),
-        start: str = Field(
+        start: str | None = Field(
+            default=None,
             description=(
-                "Search start time as an ISO 8601 timestamp (REQUIRED format). "
-                "Example: start='2025-01-01T00:00:00Z'"
+                "Search start time as an ISO 8601 timestamp. Required unless hours_back "
+                "is given. Example: start='2025-01-01T00:00:00Z'"
             ),
             examples={"2025-01-01T00:00:00Z"},
         ),
@@ -961,6 +1001,45 @@ class NGSIEMModule(BaseModule):
             ),
             examples={"2025-01-01T00:00:00Z"},
         ),
+        hours_back: float | None = Field(
+            default=None,
+            gt=0,
+            le=MAX_HOURS_BACK,
+            description=(
+                "Shortcut for the window: search this many hours back from end (or from "
+                "now). Use instead of start."
+            ),
+        ),
+        check_cql: bool = Field(
+            default=False,
+            description=(
+                "Check the query locally before sending it. Common mistakes fail at once "
+                "with ok=false, the issues in `cql_lint` and a corrected query in `fix`: "
+                "limit(N) instead of head(N), single-quoted strings, a tag field such as "
+                "event_simpleName without its # prefix, and sort() without limit=, which "
+                "silently keeps only 200 rows."
+            ),
+        ),
+        max_rows: int | None = Field(
+            default=None,
+            ge=1,
+            le=MAX_ROWS_LIMIT,
+            description=(
+                "Return at most this many rows. When more came back, `truncated` is true "
+                "and `total_rows` gives the full count."
+            ),
+        ),
+        time_budget_seconds: int | None = Field(
+            default=None,
+            ge=MIN_TIME_BUDGET_SECONDS,
+            le=MAX_TIME_BUDGET_SECONDS,
+            description=(
+                "Stop the search after this many seconds and return the rows found so far "
+                "with `partial` set to true, instead of an error. Use about 50 to stay "
+                "under a 60-second client timeout. Without it, the search runs up to "
+                "FALCON_MCP_NGSIEM_TIMEOUT seconds and a timeout is an error."
+            ),
+        ),
     ) -> dict[str, Any]:
         """Execute a CQL (CrowdStrike Query Language) query against CrowdStrike Next-Gen SIEM.
 
@@ -978,23 +1057,65 @@ class NGSIEMModule(BaseModule):
         and returns the wrong rows silently. On zero rows a hint says whether the job
         scanned events (a real negative) or scanned none (unresolved). Search times out
         after FALCON_MCP_NGSIEM_TIMEOUT seconds (default: 300).
+
+        For a bounded call, set check_cql=true, max_rows and time_budget_seconds (about
+        50): mistakes fail locally with a fix, large results are cut to max_rows with
+        `truncated` set, and a slow search returns partial rows with `partial` set.
         """
+        repository = unwrap_field_default(repository)
+        start = unwrap_field_default(start)
+        end = unwrap_field_default(end)
+        hours_back = unwrap_field_default(hours_back)
+        check_cql = unwrap_field_default(check_cql)
+        max_rows = unwrap_field_default(max_rows)
+        time_budget_seconds = unwrap_field_default(time_budget_seconds)
+
         # `repository` is interpolated into the request path, so validate it before it
         # can reach any of the three calls below.
         repository_error = _validate_repository(repository)
         if repository_error is not None:
             return repository_error
 
+        if check_cql:
+            issues, fixed = lint_cql(query_string)
+            if issues:
+                return {
+                    "ok": False,
+                    "error": "The CQL query has mistakes that would fail or return wrong rows.",
+                    "cql_lint": issues,
+                    "cql": query_string,
+                    "fix": fixed,
+                }
+
+        window = _resolve_search_window(start, end, hours_back)
+        if "error" in window:
+            return window
+
+        bounded = time_budget_seconds is not None
+        timeout_seconds = time_budget_seconds if bounded else TIMEOUT_SECONDS
         outcome = await self._run_search_job(
             query_string=query_string,
-            start_ms=_iso_to_epoch_ms(start),
-            end_ms=_iso_to_epoch_ms(end) if isinstance(end, str) else None,
+            start_ms=window["start_ms"],
+            end_ms=window["end_ms"],
             repository=repository,
-            timeout_seconds=TIMEOUT_SECONDS,
+            timeout_seconds=timeout_seconds,
+            deadline=time.monotonic() + timeout_seconds if bounded else None,
         )
 
         if outcome.error is not None:
             return self._format_cql_error_response(outcome.error, query_string)
+
+        if outcome.timed_out and bounded:
+            envelope = self._build_job_envelope(
+                outcome.partial_events or [], outcome.job or {}, query_string
+            )
+            envelope["partial"] = True
+            envelope["partial_reason"] = (
+                f"The search did not finish within {timeout_seconds} seconds, so it was "
+                "stopped. These are the rows found so far; narrow the window or the query "
+                "for a complete answer."
+            )
+            return self._finish_bounded_envelope(envelope, max_rows, check_cql)
 
         if outcome.timed_out:
             # How far the job got, and whether cleanup actually stopped it.
@@ -1014,7 +1135,27 @@ class NGSIEMModule(BaseModule):
             )
             return self._format_cql_error_response(error_response, query_string)
 
-        return self._build_job_envelope(outcome.events or [], outcome.job or {}, query_string)
+        envelope = self._build_job_envelope(outcome.events or [], outcome.job or {}, query_string)
+        if bounded or max_rows is not None or check_cql:
+            envelope.setdefault("partial", False)
+            return self._finish_bounded_envelope(envelope, max_rows, check_cql)
+        return envelope
+
+    @staticmethod
+    def _finish_bounded_envelope(
+        envelope: dict[str, Any],
+        max_rows: int | None,
+        check_cql: bool,
+    ) -> dict[str, Any]:
+        """Apply the row cap and mark the envelope for callers that asked for bounds."""
+        rows = envelope.get("results") or []
+        envelope["total_rows"] = len(rows)
+        envelope["truncated"] = max_rows is not None and len(rows) > max_rows
+        if envelope["truncated"]:
+            envelope["results"] = rows[:max_rows]
+        if check_cql:
+            envelope["ok"] = True
+        return envelope
 
     async def _run_search_job(
         self,
@@ -1085,6 +1226,7 @@ class NGSIEMModule(BaseModule):
         # Step 2: Poll for completion
         elapsed = 0.0
         last_job_meta: dict[str, Any] | None = None
+        last_events: list[dict[str, Any]] = []
         while elapsed < timeout_seconds and (deadline is None or time.monotonic() < deadline):
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
             elapsed += POLL_INTERVAL_SECONDS
@@ -1109,6 +1251,7 @@ class NGSIEMModule(BaseModule):
 
             body = poll_response.get("body", {})
             last_job_meta = self._extract_job_metadata(body, repository, job_id)
+            last_events = list(body.get("events") or [])
             if body.get("done"):
                 logger.debug("NGSIEM search job completed: %s", job_id)
                 return _SearchJobOutcome(
@@ -1129,6 +1272,7 @@ class NGSIEMModule(BaseModule):
             job=last_job_meta,
             timed_out=True,
             stop_status_code=stop_response.get("status_code"),
+            partial_events=last_events,
         )
 
     def _list_with_meta(

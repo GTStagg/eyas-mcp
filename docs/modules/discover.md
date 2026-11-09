@@ -78,6 +78,18 @@ Responses include `pagination.total` (the total number of records matching the f
 - "Which local accounts have admin privileges?"
 - "Find accounts whose password hasn't been changed in over a year"
 
+### `falcon_search_assets`
+
+**Required scopes:** `Assets:read`
+
+Search Discover assets of every entity type: managed, unmanaged and unsupported.
+
+Unlike falcon_search_managed_assets and falcon_search_unmanaged_assets, this
+tool doesn't pin an entity type, so it also reaches unsupported assets. Without
+a filter it lists every asset and `pagination.total` counts them all. Set
+include_type_totals to get a count per entity type in the same call.
+Responses include `pagination.total` (the total number of records matching the filter, or null when the API does not report a count) — use it to answer "how many" questions.
+
 ## Resources
 
 - **`falcon://discover/applications/fql-guide`**: Contains the guide for the `filter` param of the `falcon_search_applications` tool.

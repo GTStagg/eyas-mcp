@@ -25,12 +25,13 @@ class TestDiscoverModule(unittest.TestCase):
     def test_register_tools(self):
         """Test that tools are registered correctly."""
         self.module.register_tools(self.server)
-        self.assertEqual(self.server.add_tool.call_count, 4)
-        self.assertEqual(len(self.module.tools), 4)
+        self.assertEqual(self.server.add_tool.call_count, 5)
+        self.assertEqual(len(self.module.tools), 5)
         self.assertEqual(self.module.tools[0], "falcon_search_applications")
         self.assertEqual(self.module.tools[1], "falcon_search_unmanaged_assets")
         self.assertEqual(self.module.tools[2], "falcon_search_managed_assets")
         self.assertEqual(self.module.tools[3], "falcon_search_accounts")
+        self.assertEqual(self.module.tools[4], "falcon_search_assets")
         for call in self.server.add_tool.call_args_list:
             self.assertEqual(call.kwargs["annotations"], READ_ONLY_ANNOTATIONS)
 
@@ -550,6 +551,92 @@ class TestSearchApplicationsWithoutFilter(unittest.TestCase):
         self.assertEqual(result["pagination"]["next"], "next-token")
         self.assertEqual(result["results"][0]["host"], {"id": "h1", "hostname": "PC-1"})
         self.assertNotIn("architectures", result["results"][0])
+
+
+class TestSearchAssets(unittest.TestCase):
+    """falcon_search_assets reaches assets of every entity type."""
+
+    def setUp(self):
+        self.client = MagicMock(spec=FalconClient)
+        self.module = DiscoverModule(self.client)
+
+    def _call(self, **kwargs):
+        params = {
+            "filter": None,
+            "entity_type": None,
+            "limit": 100,
+            "offset": None,
+            "after": None,
+            "sort": None,
+            "include_type_totals": False,
+        }
+        params.update(kwargs)
+        return self.module.search_assets(**params)
+
+    def test_no_filter_uses_query_then_entities(self):
+        self.client.command.side_effect = [
+            _ok(["h2", "h1"], total=4900),
+            _ok([{"id": "h1", "entity_type": "unsupported"}, {"id": "h2", "entity_type": "managed"}]),
+        ]
+        result = self._call(sort="hostname.asc")
+        calls = self.client.command.call_args_list
+        self.assertEqual(calls[0][0][0], "query_hosts")
+        self.assertEqual(calls[0][1]["parameters"], {"limit": 100, "offset": 0, "sort": "hostname.asc"})
+        self.assertEqual(calls[1][0][0], "get_hosts")
+        self.assertEqual([row["id"] for row in result["results"]], ["h2", "h1"])
+        self.assertEqual(result["pagination"]["total"], 4900)
+
+    def test_entity_type_and_filter_use_combined_endpoint(self):
+        self.client.command.return_value = {
+            "status_code": 200,
+            "body": {"meta": {"pagination": {"total": 7, "after": "tok2"}}, "resources": [{"id": "h1"}]},
+        }
+        result = self._call(entity_type="unsupported", filter="platform_name:'Windows'", after="tok1")
+        call = self.client.command.call_args
+        self.assertEqual(call[0][0], "combined_hosts")
+        self.assertEqual(call[1]["parameters"]["filter"], "entity_type:'unsupported'+platform_name:'Windows'")
+        self.assertEqual(call[1]["parameters"]["after"], "tok1")
+        self.assertEqual(result["pagination"], {"total": 7, "next": "tok2"})
+        self.assertEqual(result["filter_used"], "entity_type:'unsupported'+platform_name:'Windows'")
+
+    def test_filter_without_entity_type_is_not_pinned(self):
+        self.client.command.return_value = _ok([], total=0)
+        self._call(filter="platform_name:'Windows'")
+        self.assertEqual(self.client.command.call_args[1]["parameters"]["filter"], "platform_name:'Windows'")
+
+    def test_rejects_entity_type_that_could_break_the_filter(self):
+        result = self._call(entity_type="x' or entity_type:'y")
+        self.assertIn("error", result[0])
+        self.client.command.assert_not_called()
+
+    def test_type_totals(self):
+        totals = {None: 4902, "entity_type:'managed'": 1084, "entity_type:'unmanaged'": 2196, "entity_type:'unsupported'": 1600}
+
+        def command(operation, parameters=None, **_):
+            if operation == "query_hosts" and parameters.get("limit") == 1:
+                return _ok([], total=totals[parameters.get("filter")])
+            if operation == "query_hosts":
+                return _ok(["h1"], total=4902)
+            return _ok([{"id": "h1"}])
+
+        self.client.command.side_effect = command
+        result = self._call(include_type_totals=True)
+        self.assertEqual(
+            result["totals_by_entity_type"],
+            {"managed": 1084, "unmanaged": 2196, "unsupported": 1600, "other": 22, "total": 4902},
+        )
+
+    def test_type_totals_error_fails_the_call(self):
+        def command(operation, parameters=None, **_):
+            if parameters.get("limit") == 1:
+                return {"status_code": 403, "body": {"errors": [{"code": 403, "message": "denied"}]}}
+            if operation == "query_hosts":
+                return _ok(["h1"], total=1)
+            return _ok([{"id": "h1"}])
+
+        self.client.command.side_effect = command
+        result = self._call(include_type_totals=True)
+        self.assertIn("error", result[0])
 
 
 if __name__ == "__main__":

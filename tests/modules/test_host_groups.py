@@ -2,7 +2,9 @@
 Tests for the Host Groups module.
 """
 
+import time
 import unittest
+from unittest.mock import patch
 
 from mcp.types import ToolAnnotations
 
@@ -503,6 +505,132 @@ class TestHostGroupsModule(TestModules):
         """The membership lookup is registered with read-only annotations."""
         self.module.register_tools(self.mock_server)
         self.assert_tool_annotations("falcon_get_host_group_membership", READ_ONLY_ANNOTATIONS)
+
+
+AID = "a" * 32
+
+
+class TestHostGroupMembershipVerify(TestModules):
+    """verify modes on falcon_get_host_group_membership check groups one by one."""
+
+    def setUp(self):
+        self.setup_module(HostGroupsModule)
+
+    def _wire(self, record_groups, members, static_groups=(), all_groups=(), failing=None):
+        """Route client.command by operation, since checks run in parallel."""
+        failing = failing or {}
+
+        def command(operation, parameters=None, body=None, **_):
+            if operation == "PostDeviceDetailsV2":
+                return {
+                    "status_code": 200,
+                    "body": {"resources": [{"device_id": AID, "hostname": "WS-1", "groups": list(record_groups)}]},
+                }
+            if operation == "queryHostGroups":
+                ids = list(static_groups) if parameters.get("filter") else list(all_groups)
+                return {"status_code": 200, "body": {"resources": ids, "meta": {"pagination": {"total": len(ids)}}}}
+            if operation == "queryGroupMembers":
+                group_id = parameters["id"]
+                self.assertEqual(parameters["filter"], f"device_id:'{AID}'")
+                if group_id in failing:
+                    return failing[group_id]
+                return {"status_code": 200, "body": {"resources": [AID] if group_id in members else []}}
+            if operation == "getHostGroups":
+                return {"status_code": 200, "body": {"resources": [{"id": g} for g in parameters["ids"]]}}
+            raise AssertionError(f"unexpected operation {operation}")
+
+        self.mock_client.command.side_effect = command
+
+    def test_none_is_the_default_and_checks_nothing(self):
+        self._wire(["g1", "g2"], members={"g1"})
+        result = self.module.get_host_group_membership(device_id=AID)
+        self.assertEqual([g["id"] for g in result["results"]], ["g1", "g2"])
+        self.assertNotIn("verification", result)
+        operations = {c[0][0] for c in self.mock_client.command.call_args_list}
+        self.assertNotIn("queryGroupMembers", operations)
+
+    def test_record_drops_stale_groups(self):
+        self._wire(["g1", "g2", "g3"], members={"g1", "g3"})
+        result = self.module.get_host_group_membership(device_id=AID, verify="record")
+        self.assertEqual([g["id"] for g in result["results"]], ["g1", "g3"])
+        verification = result["verification"]
+        self.assertEqual(verification["mode"], "record")
+        self.assertEqual(verification["groups_checked"], 3)
+        self.assertEqual(verification["stale_record_group_ids"], ["g2"])
+        self.assertEqual(verification["missing_from_record_group_ids"], [])
+
+    def test_static_finds_groups_missing_from_the_record(self):
+        self._wire(["g1"], members={"g1", "s2"}, static_groups=["s1", "s2"])
+        result = self.module.get_host_group_membership(device_id=AID, verify="static")
+        self.assertEqual([g["id"] for g in result["results"]], ["g1", "s2"])
+        self.assertEqual(result["verification"]["missing_from_record_group_ids"], ["s2"])
+        self.assertEqual(result["verification"]["groups_checked"], 3)
+        list_call = next(c for c in self.mock_client.command.call_args_list if c[0][0] == "queryHostGroups")
+        self.assertEqual(list_call[1]["parameters"]["filter"], "group_type:'static',group_type:'staticByID'")
+
+    def test_all_checks_every_group(self):
+        self._wire([], members={"d9"}, all_groups=["s1", "d9"])
+        result = self.module.get_host_group_membership(device_id=AID, verify="all")
+        self.assertEqual([g["id"] for g in result["results"]], ["d9"])
+
+    def test_any_failed_check_fails_the_whole_call(self):
+        for failure in (
+            {"status_code": 403, "body": {"errors": [{"code": 403, "message": "access denied"}]}},
+            {"status_code": 500, "body": {"errors": [{"code": 500, "message": "upstream"}]}},
+            {"status_code": 429, "body": {"errors": [{"code": 429, "message": "rate limited"}]}},
+        ):
+            with self.subTest(status=failure["status_code"]):
+                self._wire(["g1", "g2"], members={"g1"}, failing={"g2": failure})
+                result = self.module.get_host_group_membership(device_id=AID, verify="record")
+                self.assertIsInstance(result, list)
+                self.assertIn("g2", result[0]["error"])
+
+    def test_transport_exception_fails_the_whole_call(self):
+        self._wire(["g1", "g2"], members={"g1"})
+        wired = self.mock_client.command.side_effect
+
+        def command(operation, parameters=None, **kwargs):
+            if operation == "queryGroupMembers" and parameters["id"] == "g2":
+                raise ConnectionError("reset by peer")
+            return wired(operation, parameters=parameters, **kwargs)
+
+        self.mock_client.command.side_effect = command
+        result = self.module.get_host_group_membership(device_id=AID, verify="record")
+        self.assertIsInstance(result, list)
+        self.assertIn("g2", result[0]["error"])
+
+    def test_deleted_group_is_reported_not_failed(self):
+        gone = {"status_code": 404, "body": {"errors": [{"code": 404, "message": "Group not found"}]}}
+        self._wire(["g1", "g2"], members={"g1"}, failing={"g2": gone})
+        result = self.module.get_host_group_membership(device_id=AID, verify="record")
+        self.assertEqual([g["id"] for g in result["results"]], ["g1"])
+        self.assertEqual(result["verification"]["deleted_group_ids"], ["g2"])
+
+    @patch("falcon_mcp.modules.host_groups.MEMBERSHIP_CHECK_BUDGET_SECONDS", 0)
+    def test_budget_exhausted_fails_the_call(self):
+        self._wire(["g1", "g2"], members={"g1"})
+        wired = self.mock_client.command.side_effect
+
+        def slow(operation, **kwargs):
+            if operation == "queryGroupMembers":
+                time.sleep(0.2)
+            return wired(operation, **kwargs)
+
+        self.mock_client.command.side_effect = slow
+        result = self.module.get_host_group_membership(device_id=AID, verify="record")
+        self.assertIsInstance(result, list)
+        self.assertIn("budget", result[0]["error"])
+
+    def test_verify_needs_a_real_device_id(self):
+        self.mock_client.command.return_value = {
+            "status_code": 200,
+            "body": {"resources": [{"device_id": "x' or '1", "groups": ["g1"]}]},
+        }
+        result = self.module.get_host_group_membership(device_id="x' or '1", verify="record")
+        self.assertIsInstance(result, list)
+        self.assertIn("error", result[0])
+        operations = [c[0][0] for c in self.mock_client.command.call_args_list]
+        self.assertNotIn("queryGroupMembers", operations)
 
 
 if __name__ == "__main__":

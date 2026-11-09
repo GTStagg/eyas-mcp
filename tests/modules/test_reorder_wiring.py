@@ -392,7 +392,7 @@ CASES: list[ReorderCase] = [
         id_field="id",
         query_patch="client.command",
         get_patch="client.command",
-        site=("falcon_mcp/modules/discover.py", "_list_all_applications"),
+        site=("falcon_mcp/modules/discover.py", "_list_via_query"),
     ),
     # The "query" step is the device record, whose `groups` field lists the IDs the
     # group details are reordered against.

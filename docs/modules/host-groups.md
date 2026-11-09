@@ -59,7 +59,9 @@ membership or to explain which policies reach it. Reads the host's group IDs
 from its device record, then returns full details for each group, including
 name, group_type, and assignment_rule. Dynamic group membership reflects
 Falcon's latest evaluation, so a recent tag or attribute change may not show
-yet.
+yet. The host record can be stale; set verify to check membership group by
+group, for example verify='static' before saving groups to restore after
+incident response.
 
 **Example prompts:**
 

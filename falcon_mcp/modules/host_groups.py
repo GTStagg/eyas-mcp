@@ -5,8 +5,11 @@ This module provides tools for searching, creating, updating, and deleting
 CrowdStrike Falcon host groups, as well as managing group membership.
 """
 
+import re
+import time
+from concurrent.futures import FIRST_EXCEPTION, Future, ThreadPoolExecutor, wait
 from textwrap import dedent
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server import FastMCP
 from mcp.server.fastmcp.resources import TextResource
@@ -19,6 +22,25 @@ from falcon_mcp.modules.base import BaseModule
 from falcon_mcp.resources.host_groups import SEARCH_HOST_GROUPS_FQL_DOCUMENTATION
 
 logger = get_logger(__name__)
+
+# Membership checks run this many at a time, within this many seconds, so a full
+# check stays under a 60-second MCP client timeout.
+MEMBERSHIP_CHECK_WORKERS = 8
+MEMBERSHIP_CHECK_BUDGET_SECONDS = 50
+GROUP_PAGE_SIZE = 500
+GROUP_DETAILS_BATCH = 100
+# device_id is written into a quoted FQL value, so only a real AID is accepted.
+DEVICE_ID_PATTERN = re.compile(r"[0-9a-fA-F]{32}")
+STATIC_GROUP_FILTER = "group_type:'static',group_type:'staticByID'"
+
+
+class MembershipCheckError(Exception):
+    """A group membership check failed, so the answer would be incomplete."""
+
+    def __init__(self, group_id: str, detail: Any) -> None:
+        super().__init__(group_id)
+        self.group_id = group_id
+        self.detail = detail
 
 
 class HostGroupsModule(BaseModule):
@@ -250,6 +272,25 @@ class HostGroupsModule(BaseModule):
                 "don't already have it, use falcon_search_hosts to look it up."
             ),
         ),
+        verify: Literal["none", "record", "static", "all"] = Field(
+            default="none",
+            description=dedent("""
+                How to confirm membership. The host record's group list can be stale.
+
+                • none: trust the host record (one call, fastest).
+                • record: check each group on the host record and drop any the host is
+                  no longer in.
+                • static: also check every static group, to find static memberships the
+                  host record is missing. Use this before saving groups to restore later:
+                  dynamic groups re-evaluate on their own, static ones don't.
+                • all: check every host group. On tenants with many groups this can run
+                  past the time budget, which fails the call.
+
+                Any mode except none checks groups 8 at a time within 50 seconds. If any
+                check fails (permission, upstream or network error) or the budget runs
+                out, the whole call fails rather than reporting the host as not a member.
+            """).strip(),
+        ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """List every host group a single host belongs to.
 
@@ -258,8 +299,11 @@ class HostGroupsModule(BaseModule):
         from its device record, then returns full details for each group, including
         name, group_type, and assignment_rule. Dynamic group membership reflects
         Falcon's latest evaluation, so a recent tag or attribute change may not show
-        yet.
+        yet. The host record can be stale; set verify to check membership group by
+        group, for example verify='static' before saving groups to restore after
+        incident response.
         """
+        verify = verify if isinstance(verify, str) else "none"
         device_id = device_id.strip() if isinstance(device_id, str) else ""
         if not device_id:
             return [
@@ -293,6 +337,14 @@ class HostGroupsModule(BaseModule):
             "results": [],
             "count": 0,
         }
+
+        if verify != "none":
+            verified = self._verify_membership(device_id, group_ids, verify)
+            if "error" in verified:
+                return [verified]
+            group_ids = verified.pop("member_group_ids")
+            response["verification"] = verified
+
         if not group_ids:
             return response
 
@@ -314,6 +366,126 @@ class HostGroupsModule(BaseModule):
             response["unresolved_group_ids"] = unresolved
 
         return response
+
+    def _verify_membership(
+        self,
+        device_id: str,
+        record_group_ids: list[str],
+        mode: str,
+    ) -> dict[str, Any]:
+        """Check, group by group, which host groups really contain the device.
+
+        Returns `member_group_ids` plus a summary, or an error response when any
+        check fails or the time budget runs out. A failed check never counts as
+        "not a member".
+        """
+        if not DEVICE_ID_PATTERN.fullmatch(device_id):
+            return _format_error_response(
+                "verify needs `device_id` to be a 32-character host ID (AID).",
+                operation="queryGroupMembers",
+            )
+
+        started = time.monotonic()
+        candidates = list(dict.fromkeys(record_group_ids))
+        if mode in ("static", "all"):
+            listed = self._list_group_ids(STATIC_GROUP_FILTER if mode == "static" else None)
+            if isinstance(listed, dict):
+                return listed
+            candidates = list(dict.fromkeys([*candidates, *listed]))
+
+        deadline = started + MEMBERSHIP_CHECK_BUDGET_SECONDS
+        members: set[str] = set()
+        deleted: list[str] = []
+        executor = ThreadPoolExecutor(max_workers=MEMBERSHIP_CHECK_WORKERS)
+        try:
+            futures: dict[Future[str], str] = {
+                executor.submit(self._check_group_member, group_id, device_id): group_id
+                for group_id in candidates
+            }
+            done, pending = wait(
+                futures, timeout=max(deadline - time.monotonic(), 0), return_when=FIRST_EXCEPTION
+            )
+            for future in done:
+                error = future.exception()
+                if isinstance(error, MembershipCheckError):
+                    return _format_error_response(
+                        f"Membership check failed for host group {error.group_id}, so the "
+                        "membership list would be incomplete. Nothing was assumed.",
+                        details=error.detail,
+                        operation="queryGroupMembers",
+                    )
+                if error is not None:
+                    return _format_error_response(
+                        f"Membership check failed for host group {futures[future]}: {error}",
+                        operation="queryGroupMembers",
+                    )
+                outcome = future.result()
+                if outcome == "member":
+                    members.add(futures[future])
+                elif outcome == "deleted":
+                    deleted.append(futures[future])
+            if pending:
+                return _format_error_response(
+                    f"Checked {len(done)} of {len(candidates)} host groups before the "
+                    f"{MEMBERSHIP_CHECK_BUDGET_SECONDS}-second budget ran out, so the "
+                    "membership list would be incomplete. Try verify='record' or "
+                    "verify='static', which check fewer groups.",
+                    operation="queryGroupMembers",
+                )
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        record = set(record_group_ids)
+        return {
+            "member_group_ids": [g for g in candidates if g in members],
+            "mode": mode,
+            "groups_checked": len(candidates),
+            "seconds": round(time.monotonic() - started, 1),
+            "stale_record_group_ids": [g for g in record_group_ids if g not in members],
+            "missing_from_record_group_ids": [g for g in candidates if g in members and g not in record],
+            "deleted_group_ids": deleted,
+        }
+
+    def _check_group_member(self, group_id: str, device_id: str) -> str:
+        """Return 'member', 'not_member' or 'deleted', or raise MembershipCheckError."""
+        try:
+            response = self.client.command(
+                "queryGroupMembers",
+                parameters={"id": group_id, "filter": f"device_id:'{device_id}'", "limit": 1},
+            )
+        except Exception as exc:  # noqa: BLE001 - any transport failure must fail the call
+            raise MembershipCheckError(group_id, {"exception": str(exc)}) from exc
+
+        status = response.get("status_code")
+        body = response.get("body") or {}
+        if status == 200:
+            return "member" if body.get("resources") else "not_member"
+        messages = [str(e.get("message", "")) for e in body.get("errors") or []]
+        if status == 404 and any("group not found" in m.lower() for m in messages):
+            return "deleted"
+        raise MembershipCheckError(group_id, {"status_code": status, "errors": body.get("errors")})
+
+    def _list_group_ids(self, group_filter: str | None) -> list[str] | dict[str, Any]:
+        """List host group IDs, optionally filtered, across every page."""
+        ids: list[str] = []
+        offset = 0
+        while True:
+            params: dict[str, Any] = {"limit": GROUP_PAGE_SIZE, "offset": offset}
+            if group_filter:
+                params["filter"] = group_filter
+            response = self.client.command("queryHostGroups", parameters=params)
+            if response.get("status_code") != 200:
+                return _format_error_response(
+                    "Failed to list host groups for the membership check.",
+                    details=response.get("body"),
+                    operation="queryHostGroups",
+                )
+            page = (response.get("body") or {}).get("resources") or []
+            ids.extend(page)
+            total = ((response.get("body") or {}).get("meta") or {}).get("pagination", {}).get("total")
+            offset += len(page)
+            if not page or len(page) < GROUP_PAGE_SIZE or (isinstance(total, int) and offset >= total):
+                return ids
 
     def create_host_group(
         self,

@@ -24,6 +24,8 @@ API_SCOPE_REQUIREMENTS = {
     # Host Groups operations
     "queryCombinedHostGroups": ["Host Groups:read"],
     "queryCombinedGroupMembers": ["Host Groups:read"],
+    "queryGroupMembers": ["Host Groups:read"],
+    "queryHostGroups": ["Host Groups:read"],
     "createHostGroups": ["Host Groups:write"],
     "updateHostGroups": ["Host Groups:write"],
     "deleteHostGroups": ["Host Groups:write"],
@@ -53,6 +55,8 @@ API_SCOPE_REQUIREMENTS = {
     "query_applications": ["Assets:read"],
     "get_applications": ["Assets:read"],
     "combined_hosts": ["Assets:read"],
+    "query_hosts": ["Assets:read"],
+    "get_hosts": ["Assets:read"],
     # Cloud operations
     "ReadContainerCombined": ["Falcon Container Image:read"],
     "ReadContainerCount": ["Falcon Container Image:read"],
