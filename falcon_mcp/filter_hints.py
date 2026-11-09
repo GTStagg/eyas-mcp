@@ -208,6 +208,14 @@ FILTER_HINTS: dict[str, str] = {
         "external_ip, local_ip_addresses, os_version, "
         "first_seen_timestamp (UTC datetime), last_seen_timestamp (UTC datetime)."
     ),
+    # === Discover: All Assets ===
+    "falcon_search_assets": (
+        "Common fields: hostname, entity_type (managed|unmanaged|unsupported; prefer the "
+        "entity_type parameter), platform_name (Windows|Linux|Mac), product_type_desc, "
+        "criticality, internet_exposure (Yes|No|Pending), external_ip, "
+        "last_seen_timestamp:>'now-24h' (relative date). Omit the filter to list every "
+        "asset. Ex: platform_name:'Windows'+criticality:'Critical'"
+    ),
     # === Discover: Managed Assets ===
     "falcon_search_managed_assets": (
         "Common fields: aid (Falcon agent ID - same value as the device ID from "

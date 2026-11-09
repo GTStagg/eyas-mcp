@@ -1554,5 +1554,124 @@ class TestNGSIEMModuleConfig(unittest.TestCase):
             self.assertEqual(timeout, 60)
 
 
+class TestSearchNgsiemBounded(TestModules):
+    """check_cql, hours_back, max_rows and time_budget_seconds on falcon_search_ngsiem."""
+
+    def setUp(self):
+        self.setup_module(NGSIEMModule)
+
+        async def _command_async(*args, **kwargs):
+            return self.mock_client.command(*args, **kwargs)
+
+        self.mock_client.command_async = AsyncMock(side_effect=_command_async)
+
+    def _search(self, **kwargs):
+        params = {"query_string": "#event_simpleName=ProcessRollup2 | head(5)", "repository": "search-all"}
+        params.update(kwargs)
+        return asyncio.run(self.module.search_ngsiem(**params))
+
+    def test_check_cql_fails_locally_with_fix(self):
+        result = self._search(
+            query_string="event_simpleName=ProcessRollup2 | sort(_count)",
+            hours_back=1,
+            check_cql=True,
+        )
+        self.mock_client.command.assert_not_called()
+        self.assertFalse(result["ok"])
+        self.assertIn("error", result)
+        self.assertEqual(
+            [issue["rule"] for issue in result["cql_lint"]],
+            ["missing_tag_prefix", "sort_without_limit"],
+        )
+        self.assertEqual(result["cql"], "event_simpleName=ProcessRollup2 | sort(_count)")
+        self.assertEqual(result["fix"], "#event_simpleName=ProcessRollup2 | sort(_count, limit=1000)")
+
+    def test_check_cql_off_by_default(self):
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"id": "job-1"}},
+            {"status_code": 200, "body": {"done": True, "events": [{"a": 1}]}},
+        ]
+        with patch("falcon_mcp.modules.ngsiem.asyncio.sleep", new_callable=AsyncMock):
+            result = self._search(
+                query_string="event_simpleName=ProcessRollup2", start="2025-01-01T00:00:00Z"
+            )
+        self.assertEqual(result["results"], [{"a": 1}])
+        for key in ("ok", "partial", "truncated", "total_rows"):
+            self.assertNotIn(key, result)
+
+    @patch("falcon_mcp.modules.ngsiem.time.time", return_value=1_700_000_000.0)
+    @patch("falcon_mcp.modules.ngsiem.asyncio.sleep", new_callable=AsyncMock)
+    def test_hours_back_sets_window_and_max_rows_truncates(self, _sleep, _time):
+        events = [{"n": i} for i in range(250)]
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"id": "job-1"}},
+            {"status_code": 200, "body": {"done": True, "events": events}},
+        ]
+
+        result = self._search(hours_back=2, check_cql=True, max_rows=100)
+
+        body = self.mock_client.command.call_args_list[0][1]["body"]
+        self.assertEqual(body["start"], 1_700_000_000_000 - 2 * 3_600_000)
+        self.assertNotIn("end", body)
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["partial"])
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["total_rows"], 250)
+        self.assertEqual(len(result["results"]), 100)
+
+    def test_hours_back_counts_back_from_end(self):
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"id": "job-1"}},
+            {"status_code": 200, "body": {"done": True, "events": []}},
+        ]
+        with patch("falcon_mcp.modules.ngsiem.asyncio.sleep", new_callable=AsyncMock):
+            self._search(hours_back=1, end="2025-01-01T01:00:00Z")
+        body = self.mock_client.command.call_args_list[0][1]["body"]
+        self.assertEqual(body["end"] - body["start"], 3_600_000)
+
+    def test_needs_start_or_hours_back(self):
+        self.assertIn("error", self._search())
+        self.assertIn("error", self._search(start="2025-01-01T00:00:00Z", hours_back=1))
+        self.assertIn("error", self._search(start="not a time"))
+        self.mock_client.command.assert_not_called()
+
+    @patch("falcon_mcp.modules.ngsiem.POLL_INTERVAL_SECONDS", 5)
+    @patch("falcon_mcp.modules.ngsiem.asyncio.sleep", new_callable=AsyncMock)
+    def test_time_budget_returns_partial_rows(self, _sleep):
+        running = {"status_code": 200, "body": {"done": False, "events": [{"n": 1}, {"n": 2}]}}
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"id": "job-1"}},
+            running,
+            running,
+            {"status_code": 204, "body": {}},
+        ]
+
+        result = self._search(hours_back=24, time_budget_seconds=10, max_rows=1)
+
+        operations = [c[1].get("operation") for c in self.mock_client.command_async.call_args_list]
+        self.assertEqual(operations[-1], "StopSearchV1")
+        self.assertNotIn("error", result)
+        self.assertTrue(result["partial"])
+        self.assertIn("partial_reason", result)
+        self.assertEqual(result["results"], [{"n": 1}])
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["total_rows"], 2)
+
+    @patch("falcon_mcp.modules.ngsiem.TIMEOUT_SECONDS", 10)
+    @patch("falcon_mcp.modules.ngsiem.POLL_INTERVAL_SECONDS", 5)
+    @patch("falcon_mcp.modules.ngsiem.asyncio.sleep", new_callable=AsyncMock)
+    def test_without_budget_a_timeout_is_still_an_error(self, _sleep):
+        running = {"status_code": 200, "body": {"done": False, "events": [{"n": 1}]}}
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"id": "job-1"}},
+            running,
+            running,
+            {"status_code": 204, "body": {}},
+        ]
+        result = self._search(start="2025-01-01T00:00:00Z")
+        self.assertIn("error", result)
+        self.assertNotIn("partial", result)
+
+
 if __name__ == "__main__":
     unittest.main()

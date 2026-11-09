@@ -34,6 +34,10 @@ and returns the wrong rows silently. On zero rows a hint says whether the job
 scanned events (a real negative) or scanned none (unresolved). Search times out
 after FALCON_MCP_NGSIEM_TIMEOUT seconds (default: 300).
 
+For a bounded call, set check_cql=true, max_rows and time_budget_seconds (about
+50): mistakes fail locally with a fix, large results are cut to max_rows with
+`truncated` set, and a slow search returns partial rows with `partial` set.
+
 **Example prompts:**
 
 - "Run this CQL query for the last 24 hours: #event_simpleName=ProcessRollup2"

@@ -4,6 +4,8 @@ Discover module for Falcon MCP Server
 This module provides tools for accessing and managing CrowdStrike Falcon Discover applications, managed assets, unmanaged assets, and accounts.
 """
 
+import re
+from collections.abc import Callable
 from textwrap import dedent
 from typing import Any, Literal
 
@@ -21,10 +23,15 @@ from falcon_mcp.resources.discover import (
     SEARCH_UNMANAGED_ASSETS_FQL_DOCUMENTATION,
 )
 
-# The applications query endpoint returns at most 100 IDs per call and refuses
-# offset + limit above 10,000. The entities endpoint takes at most 100 IDs.
-APPLICATION_PAGE_SIZE = 100
-MAX_APPLICATION_QUERY_WINDOW = 10_000
+# Discover query endpoints return at most 100 IDs per call and refuse
+# offset + limit above 10,000. Their entities endpoints take at most 100 IDs.
+DISCOVER_PAGE_SIZE = 100
+MAX_DISCOVER_QUERY_WINDOW = 10_000
+
+# Asset entity types seen in Discover. Any others are counted as `other`.
+KNOWN_ENTITY_TYPES = ("managed", "unmanaged", "unsupported")
+# entity_type is written into a quoted FQL value, so allow only a plain name.
+ENTITY_TYPE_PATTERN = re.compile(r"[A-Za-z_]{1,32}")
 
 COMPACT_APPLICATION_FIELDS = (
     "id",
@@ -80,6 +87,12 @@ class DiscoverModule(BaseModule):
             server=server,
             method=self.search_accounts,
             name="search_accounts",
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.search_assets,
+            name="search_assets",
         )
 
     def register_resources(self, server: FastMCP) -> None:
@@ -183,7 +196,7 @@ class DiscoverModule(BaseModule):
             ge=0,
             description=(
                 "Starting index, used only without a filter. offset + limit can't exceed "
-                f"{MAX_APPLICATION_QUERY_WINDOW}; to go further, add a filter and page with `after`."
+                f"{MAX_DISCOVER_QUERY_WINDOW}; to go further, add a filter and page with `after`."
             ),
         ),
         after: str | None = Field(
@@ -242,11 +255,36 @@ class DiscoverModule(BaseModule):
         The combined endpoint requires a filter, and no filter matches every
         application, so this path is the only way to count and list them all.
         """
-        if offset + limit > MAX_APPLICATION_QUERY_WINDOW:
+        return self._list_via_query(
+            query_operation="query_applications",
+            get_operation="get_applications",
+            what="applications",
+            limit=limit,
+            sort=sort,
+            offset=offset,
+            transform=_compact_application if fields == "compact" else None,
+        )
+
+    def _list_via_query(
+        self,
+        query_operation: str,
+        get_operation: str,
+        what: str,
+        limit: int,
+        sort: str | None,
+        offset: int,
+        transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Page a Discover query endpoint, then fetch the records 100 IDs at a time.
+
+        Discover query endpoints return at most 100 IDs per call and refuse
+        offset + limit above 10,000. Their entities endpoints take at most 100 IDs.
+        """
+        if offset + limit > MAX_DISCOVER_QUERY_WINDOW:
             return [
                 {
                     "error": (
-                        f"offset + limit must be {MAX_APPLICATION_QUERY_WINDOW} or less without "
+                        f"offset + limit must be {MAX_DISCOVER_QUERY_WINDOW} or less without "
                         "a filter. Add a filter and page with `after` to go further."
                     )
                 }
@@ -255,17 +293,17 @@ class DiscoverModule(BaseModule):
         ids: list[str] = []
         total: Any = None
         while len(ids) < limit:
-            page_limit = min(APPLICATION_PAGE_SIZE, limit - len(ids))
+            page_limit = min(DISCOVER_PAGE_SIZE, limit - len(ids))
             response = self.client.command(
-                "query_applications",
+                query_operation,
                 parameters=prepare_api_parameters(
                     {"limit": page_limit, "offset": offset + len(ids), "sort": sort}
                 ),
             )
             page = handle_api_response(
                 response,
-                operation="query_applications",
-                error_message="Failed to search applications",
+                operation=query_operation,
+                error_message=f"Failed to search {what}",
                 default_result=[],
             )
             if self._is_error(page):
@@ -278,30 +316,168 @@ class DiscoverModule(BaseModule):
             if len(page) < page_limit:
                 break
 
-        applications: list[dict[str, Any]] = []
-        for start in range(0, len(ids), APPLICATION_PAGE_SIZE):
+        records: list[dict[str, Any]] = []
+        for start in range(0, len(ids), DISCOVER_PAGE_SIZE):
             batch = self._base_get_by_ids(
-                operation="get_applications",
-                ids=ids[start : start + APPLICATION_PAGE_SIZE],
+                operation=get_operation,
+                ids=ids[start : start + DISCOVER_PAGE_SIZE],
                 use_params=True,
             )
             if isinstance(batch, dict):
                 return [batch]
-            applications.extend(batch)
+            records.extend(batch)
 
-        applications = self._reorder_by_ids(ids, applications, id_field="id")
-        if fields == "compact":
-            applications = [_compact_application(app) for app in applications]
+        records = self._reorder_by_ids(ids, records, id_field="id")
+        if transform is not None:
+            records = [transform(record) for record in records]
 
         envelope = self._build_pagination_envelope(
-            applications, {"total": total, "offset": offset, "limit": limit}
+            records, {"total": total, "offset": offset, "limit": limit}
         )
         next_offset = offset + len(ids)
         more = isinstance(total, int) and next_offset < total
         envelope["pagination"]["next_offset"] = (
-            next_offset if more and next_offset < MAX_APPLICATION_QUERY_WINDOW else None
+            next_offset if more and next_offset < MAX_DISCOVER_QUERY_WINDOW else None
         )
         return envelope
+
+    def search_assets(
+        self,
+        filter: str | None = Field(
+            default=None,
+            description=(
+                "FQL filter expression. See `falcon://discover/managed-assets/fql-guide` for "
+                "fields. Omit it, and entity_type, to list every asset of every type."
+            ),
+            examples={"platform_name:'Windows'", "criticality:'Critical'"},
+        ),
+        entity_type: str | None = Field(
+            default=None,
+            description=(
+                "Limit results to one entity type, for example 'managed', 'unmanaged' or "
+                "'unsupported'. Omit it to include every type."
+            ),
+            examples={"managed", "unmanaged", "unsupported"},
+        ),
+        limit: int = Field(
+            default=100,
+            ge=1,
+            le=1000,
+            description="Maximum number of assets to return: 1-1000. Default is 100.",
+        ),
+        offset: int | None = Field(
+            default=None,
+            ge=0,
+            description=(
+                "Starting index, used only without a filter or entity_type. offset + limit "
+                f"can't exceed {MAX_DISCOVER_QUERY_WINDOW}; to go further, add a filter and "
+                "page with `after`."
+            ),
+        ),
+        after: str | None = Field(
+            default=None,
+            description="Next-page token from a previous filtered call's pagination.next.",
+        ),
+        sort: str | None = Field(
+            default=None,
+            description="Sort field and direction, for example 'hostname.asc' or 'last_seen_timestamp.desc'.",
+            examples={"hostname.asc", "last_seen_timestamp.desc"},
+        ),
+        include_type_totals: bool = Field(
+            default=False,
+            description=(
+                "Also return `totals_by_entity_type`: the asset count for each known entity "
+                "type, plus `other` for any assets the known types don't cover."
+            ),
+        ),
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Search Discover assets of every entity type: managed, unmanaged and unsupported.
+
+        Unlike falcon_search_managed_assets and falcon_search_unmanaged_assets, this
+        tool doesn't pin an entity type, so it also reaches unsupported assets. Without
+        a filter it lists every asset and `pagination.total` counts them all. Set
+        include_type_totals to get a count per entity type in the same call.
+        Responses include `pagination.total` (the total number of records matching the filter, or null when the API does not report a count) — use it to answer "how many" questions.
+        """
+        if entity_type is not None and not ENTITY_TYPE_PATTERN.fullmatch(entity_type):
+            return [
+                {
+                    "error": (
+                        f"Invalid entity_type {entity_type!r}: use a plain type name such as "
+                        "'managed', 'unmanaged' or 'unsupported'."
+                    )
+                }
+            ]
+
+        parts = [f"entity_type:'{entity_type}'"] if entity_type else []
+        if filter:
+            parts.append(filter)
+        combined_filter = "+".join(parts)
+
+        if combined_filter:
+            assets, pagination = self._base_search_with_meta(
+                operation="combined_hosts",
+                search_params={
+                    "filter": combined_filter,
+                    "limit": limit,
+                    "sort": sort,
+                    "after": after,
+                },
+                error_message="Failed to search assets",
+            )
+            if self._is_error(assets):
+                return self._format_fql_error_response(
+                    [assets], combined_filter, SEARCH_MANAGED_ASSETS_FQL_DOCUMENTATION
+                )
+            result = self._build_pagination_envelope(assets, pagination, combined_filter)
+        else:
+            listed = self._list_via_query(
+                query_operation="query_hosts",
+                get_operation="get_hosts",
+                what="assets",
+                limit=limit,
+                sort=sort,
+                offset=offset or 0,
+            )
+            if not isinstance(listed, dict):
+                return listed
+            result = listed
+
+        if include_type_totals:
+            totals = self._asset_type_totals()
+            if self._is_error(totals):
+                return [totals]
+            result["totals_by_entity_type"] = totals
+        return result
+
+    def _asset_type_totals(self) -> dict[str, Any]:
+        """Count assets per known entity type, and the remainder as `other`."""
+        counts: dict[str, Any] = {}
+        for label, query_filter in [("all", None), *((t, f"entity_type:'{t}'") for t in KNOWN_ENTITY_TYPES)]:
+            response = self.client.command(
+                "query_hosts",
+                parameters=prepare_api_parameters({"limit": 1, "filter": query_filter}),
+            )
+            ids = handle_api_response(
+                response,
+                operation="query_hosts",
+                error_message="Failed to count assets",
+                default_result=[],
+            )
+            if self._is_error(ids):
+                return ids
+            counts[label] = (self._extract_pagination(response) or {}).get("total")
+
+        total = counts.pop("all")
+        known = [counts[t] for t in KNOWN_ENTITY_TYPES]
+        if isinstance(total, int) and all(isinstance(n, int) for n in known):
+            # Assets are discovered continuously, so the separate counts can drift by a
+            # few between calls. Never report a negative remainder.
+            counts["other"] = max(total - sum(known), 0)
+        else:
+            counts["other"] = None
+        counts["total"] = total
+        return counts
 
     def search_unmanaged_assets(
         self,
