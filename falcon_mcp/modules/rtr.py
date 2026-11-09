@@ -8,6 +8,7 @@ and running scripts from the tenant's custom RTR script library.
 
 import json
 import re
+import secrets
 import time
 from textwrap import dedent
 from typing import Any, Literal
@@ -20,7 +21,7 @@ from pydantic import AnyUrl, Field
 from falcon_mcp.client import FalconClient
 from falcon_mcp.common.errors import _format_error_response, handle_api_response
 from falcon_mcp.common.logging import get_logger
-from falcon_mcp.common.utils import prepare_api_parameters
+from falcon_mcp.common.utils import prepare_api_parameters, unwrap_field_default
 from falcon_mcp.modules.base import BaseModule
 from falcon_mcp.resources.rtr import (
     AGGREGATE_RTR_SESSIONS_GUIDE,
@@ -86,6 +87,18 @@ MAX_CUSTOM_SCRIPT_DESCRIPTION = 1000
 CUSTOM_SCRIPT_EXTENSIONS = {"windows": "ps1", "mac": "sh", "linux": "sh"}
 # Opaque Falcon IDs (scripts, command requests): letters, digits, `-` and `_` only.
 OPAQUE_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}")
+
+# The readiness probe: a harmless script that only prints a marker, so a run counts
+# as working only if the marker comes back. One copy is uploaded per host platform.
+PROBE_MARKER = "rtr-runscript-probe-ok"
+PROBE_SCRIPTS = {
+    "windows": f"Write-Output '{PROBE_MARKER}'\nexit 0\n",
+    "mac": f"#!/bin/sh\necho '{PROBE_MARKER}'\nexit 0\n",
+    "linux": f"#!/bin/sh\necho '{PROBE_MARKER}'\nexit 0\n",
+}
+PROBE_PLATFORMS = {"Windows": "windows", "Mac": "mac", "Linux": "linux"}
+# Seconds allowed for each probe run, within the overall timeout.
+PROBE_COMMAND_TIMEOUT = 30
 MAX_STATUS_REQUESTS = 100
 
 
@@ -1244,19 +1257,41 @@ class RTRModule(BaseModule):
             le=60,
             description="Seconds to wait between attempts.",
         ),
+        probe: Literal["session", "runscript"] = Field(
+            default="session",
+            description=dedent("""
+                What counts as ready.
+
+                • session: the host accepts an RTR session. No commands run.
+                • runscript: a custom script actually runs on the host. Use this before
+                  falcon_run_rtr_script_on_hosts after a policy or host group change,
+                  which can take a minute or more to reach the sensor; until then a
+                  session opens but runscript can still fail. The tool uploads a private
+                  script that only prints a marker and exits 0, one per host platform,
+                  runs it with runscript -CloudFile on each attempt, and deletes it at
+                  the end, even after a failure. A host is ready once the marker comes
+                  back. Needs the RTR Admin write scope.
+            """).strip(),
+        ),
     ) -> dict[str, Any]:
         """Wait until hosts accept RTR sessions, retrying until they do or time runs out.
 
         Use this after a change that briefly blocks RTR on a host, such as moving it into
         a new host group or policy, or a reboot, before running RTR commands or scripts.
         Each attempt opens an RTR batch session on the hosts that aren't ready yet; the
-        first attempt is immediate. It runs no commands, and the sessions expire on their
-        own. Returns `ready` (true when every host connected), the hosts that connected
-        with their session IDs, and the last error for hosts that never did.
+        first attempt is immediate. By default it runs no commands, and the sessions
+        expire on their own. With probe='runscript' a host counts as ready only once a
+        harmless probe script actually runs on it, which is the check to use before
+        falcon_run_rtr_script_on_hosts. Returns `ready` (true when every host is ready),
+        the ready hosts with their session IDs, and the last error for hosts that never
+        got there.
         """
         hosts, refusal = _validate_device_ids(device_ids)
         if refusal:
             return _format_error_response(refusal, operation="BatchInitSessions")
+        probe = unwrap_field_default(probe)
+        if probe == "runscript":
+            return self._wait_for_runscript(hosts, timeout_seconds, interval_seconds)
 
         started = time.monotonic()
         deadline = started + timeout_seconds
@@ -1297,6 +1332,171 @@ class RTRModule(BaseModule):
                 {"device_id": aid, "last_error": last_errors.get(aid)} for aid in not_ready
             ],
         }
+
+    def _wait_for_runscript(
+        self, hosts: list[str], timeout_seconds: int, interval_seconds: int
+    ) -> dict[str, Any]:
+        """Retry a harmless runscript on each host until it works or time runs out."""
+        started = time.monotonic()
+        deadline = started + timeout_seconds
+
+        platforms, error = self._host_platforms(hosts)
+        if error is not None:
+            return {**error, "phase": "platform_lookup"}
+
+        last_errors: dict[str, Any] = {}
+        for aid in hosts:
+            if aid not in platforms:
+                last_errors[aid] = (
+                    "Host not found, or its platform isn't Windows, Mac or Linux, so no "
+                    "probe script could run on it."
+                )
+
+        uploaded: dict[str, dict[str, Any]] = {}
+        ready: dict[str, dict[str, Any]] = {}
+        attempts = 0
+        try:
+            suffix = secrets.token_hex(6)
+            for platform in sorted(set(platforms.values())):
+                name = f"rtr-runscript-probe-{suffix}-{platform}"
+                created = self.create_custom_script(
+                    name=name,
+                    content=PROBE_SCRIPTS[platform],
+                    platform=platform,  # type: ignore[arg-type]
+                    permission_type="private",
+                    description="Temporary RTR readiness probe. Prints a marker and exits 0.",
+                    comments_for_audit_log="RTR readiness probe, deleted after the check.",
+                )
+                if "error" in created:
+                    return {**created, "phase": "probe_upload"}
+                uploaded[platform] = created
+
+            probe_hosts = [aid for aid in hosts if aid in platforms]
+            while True:
+                attempts += 1
+                pending = [aid for aid in probe_hosts if aid not in ready]
+                if pending:
+                    self._probe_attempt(pending, platforms, uploaded, deadline, ready, last_errors)
+                if len(ready) == len(probe_hosts):
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(interval_seconds, remaining))
+        finally:
+            cleanup = self._delete_probe_scripts(uploaded)
+
+        not_ready = [aid for aid in hosts if aid not in ready]
+        result: dict[str, Any] = {
+            "ready": not not_ready,
+            "timed_out": bool(not_ready),
+            "probe": "runscript",
+            "attempts": attempts,
+            "waited_seconds": round(time.monotonic() - started),
+            "ready_hosts": [ready[aid] for aid in hosts if aid in ready],
+            "not_ready_hosts": [
+                {"device_id": aid, "last_error": last_errors.get(aid)} for aid in not_ready
+            ],
+            "probe_cleanup": cleanup,
+        }
+        if cleanup["failed"]:
+            result["warning"] = (
+                "A probe script couldn't be deleted. Remove it with falcon_delete_rtr_scripts "
+                "using the IDs under probe_cleanup.failed."
+            )
+        return result
+
+    def _probe_attempt(
+        self,
+        pending: list[str],
+        platforms: dict[str, str],
+        uploaded: dict[str, dict[str, Any]],
+        deadline: float,
+        ready: dict[str, dict[str, Any]],
+        last_errors: dict[str, Any],
+    ) -> None:
+        """Open sessions on pending hosts and run the probe on each one that connected."""
+        timeout = int(max(10, min(PROBE_COMMAND_TIMEOUT, deadline - time.monotonic())))
+        batch = self._open_batch_sessions(pending, timeout)
+        if "error" in batch:
+            for aid in pending:
+                last_errors[aid] = batch.get("error")
+            return
+        for failure in batch["failed_hosts"]:
+            last_errors[failure["device_id"]] = failure["errors"]
+
+        for platform, script in uploaded.items():
+            sessions = {
+                aid: sid for aid, sid in batch["sessions"].items() if platforms.get(aid) == platform
+            }
+            if not sessions:
+                continue
+            run = self._run_batch_command(
+                operation="BatchAdminCmd",
+                batch={"batch_id": batch["batch_id"], "sessions": sessions, "failed_hosts": []},
+                hosts=list(sessions),
+                base_command="runscript",
+                command_string=f'runscript -CloudFile="{script["name"]}"',
+                timeout_seconds=timeout,
+                parse_json=False,
+            )
+            if "error" in run:
+                for aid in sessions:
+                    last_errors[aid] = run.get("error")
+                continue
+            for failure in run["failed_hosts"]:
+                last_errors[failure["device_id"]] = failure["errors"]
+            for host in run["results"]:
+                aid = host["device_id"]
+                if host["complete"] and PROBE_MARKER in host["stdout"] and not host.get("errors"):
+                    ready[aid] = {"device_id": aid, "session_id": host["session_id"]}
+                    last_errors.pop(aid, None)
+                else:
+                    last_errors[aid] = {
+                        "complete": host["complete"],
+                        "stdout": host["stdout"][:500],
+                        "stderr": host["stderr"][:500],
+                        **({"errors": host["errors"]} if host.get("errors") else {}),
+                    }
+
+    def _host_platforms(
+        self, hosts: list[str]
+    ) -> tuple[dict[str, str], dict[str, Any] | None]:
+        """Map each host to windows, mac or linux. Unknown hosts are left out."""
+        devices = self._base_get_by_ids(operation="PostDeviceDetailsV2", ids=hosts)
+        if isinstance(devices, dict):
+            return {}, devices
+        platforms: dict[str, str] = {}
+        for device in devices:
+            if not isinstance(device, dict):
+                continue
+            aid = str(device.get("device_id", "")).lower()
+            platform = PROBE_PLATFORMS.get(str(device.get("platform_name")))
+            if aid in hosts and platform:
+                platforms[aid] = platform
+        return platforms, None
+
+    def _delete_probe_scripts(self, uploaded: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        """Delete the probe scripts this call uploaded, looking up any missing IDs."""
+        ids: list[str] = []
+        failed: list[dict[str, Any]] = []
+        for created in uploaded.values():
+            script_id = created.get("id")
+            if not script_id:
+                found, error = self._find_custom_script(created["name"])
+                script_id = found.get("id") if found else None
+                if not script_id:
+                    failed.append({"name": created["name"], "error": error or "ID not found"})
+                    continue
+            ids.append(script_id)
+        if ids:
+            deleted = self.delete_custom_scripts(ids=ids)
+            if "error" in deleted:
+                failed.extend({"id": i, "error": deleted} for i in ids)
+                return {"deleted": [], "failed": failed}
+            failed.extend(deleted["failed"])
+            return {"deleted": deleted["deleted"], "failed": failed}
+        return {"deleted": [], "failed": failed}
 
     def search_custom_scripts(
         self,

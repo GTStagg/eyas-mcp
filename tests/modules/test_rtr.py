@@ -1536,3 +1536,189 @@ class TestRTRWaitForSessions(TestModules):
         )
         self.assertIn("error", result)
         self.mock_client.command.assert_not_called()
+
+
+class TestRTRRunscriptProbe(TestModules):
+    """probe='runscript' on falcon_wait_for_rtr_sessions."""
+
+    def setUp(self):
+        self.setup_module(RTRModule)
+        self.scripts: dict[str, dict[str, Any]] = {}
+        self.deleted: list[str] = []
+        self.platforms = {AID_ONLINE: "Windows", AID_OFFLINE: "Linux"}
+        # Per attempt, per host: "ok", "fail" or "offline".
+        self.plan: list[dict[str, str]] = []
+        self.attempt = 0
+        self.create_status = 200
+        self.delete_status = 200
+
+    def _command(self, operation, parameters=None, body=None, data=None, files=None, **_):
+        if operation == "PostDeviceDetailsV2":
+            return {
+                "status_code": 200,
+                "body": {
+                    "resources": [
+                        {"device_id": aid, "platform_name": self.platforms[aid]}
+                        for aid in body["ids"]
+                        if aid in self.platforms
+                    ]
+                },
+            }
+        if operation == "RTR_ListScripts":
+            name = parameters["filter"].split("'")[1]
+            ids = [sid for sid, s in self.scripts.items() if s["name"] == name]
+            return {"status_code": 200, "body": {"resources": ids}}
+        if operation == "RTR_GetScriptsV2":
+            return {"status_code": 200, "body": {"resources": [self.scripts[i] for i in parameters["ids"]]}}
+        if operation == "RTR_CreateScripts":
+            if self.create_status >= 300:
+                return {"status_code": self.create_status, "body": {"errors": [{"message": "denied"}]}}
+            sid = f"script-{len(self.scripts)}"
+            self.scripts[sid] = {
+                "id": sid,
+                "name": data["name"],
+                "platform": data["platform"],
+                "permission_type": data["permission_type"],
+                "content": files[0][1][1].decode(),
+            }
+            return {"status_code": 200, "body": {}}
+        if operation == "RTR_DeleteScripts":
+            if self.delete_status >= 300:
+                return {"status_code": self.delete_status, "body": {"errors": [{"message": "boom"}]}}
+            self.deleted.append(parameters["ids"])
+            return {"status_code": 200, "body": {}}
+        if operation == "BatchInitSessions":
+            self.attempt += 1
+            states = self.plan[min(self.attempt, len(self.plan)) - 1]
+            resources = {
+                aid: (
+                    {"session_id": f"s-{aid[0]}", "errors": []}
+                    if states.get(aid) != "offline"
+                    else {"session_id": "", "errors": [{"message": "offline"}]}
+                )
+                for aid in body["host_ids"]
+            }
+            return {"status_code": 201, "body": {"batch_id": f"b{self.attempt}", "resources": resources}}
+        if operation == "BatchAdminCmd":
+            states = self.plan[min(self.attempt, len(self.plan)) - 1]
+            results = {}
+            for aid in body["optional_hosts"]:
+                ok = states.get(aid) == "ok"
+                results[aid] = {
+                    "complete": True,
+                    "task_id": f"t-{aid[0]}",
+                    "stdout": "rtr-runscript-probe-ok\n" if ok else "",
+                    "stderr": "" if ok else "runscript failed: not permitted",
+                }
+            return {"status_code": 201, "body": {"combined": {"resources": results}}}
+        raise AssertionError(f"unexpected operation {operation}")
+
+    def _wait(self, hosts, timeout=120):
+        self.mock_client.command.side_effect = self._command
+        return self.module.wait_for_sessions(
+            device_ids=hosts, timeout_seconds=timeout, interval_seconds=5, probe="runscript"
+        )
+
+    @patch("falcon_mcp.modules.rtr.time.sleep")
+    def test_ready_only_after_probe_runs_and_scripts_are_deleted(self, _sleep):
+        self.plan = [{AID_ONLINE: "fail"}, {AID_ONLINE: "fail"}, {AID_ONLINE: "ok"}]
+
+        result = self._wait([AID_ONLINE])
+
+        self.assertTrue(result["ready"])
+        self.assertFalse(result["timed_out"])
+        self.assertEqual(result["attempts"], 3)
+        self.assertEqual(result["ready_hosts"], [{"device_id": AID_ONLINE, "session_id": "s-a"}])
+        (script,) = self.scripts.values()
+        self.assertEqual(script["platform"], "windows")
+        self.assertEqual(script["permission_type"], "private")
+        self.assertIn("rtr-runscript-probe-ok", script["content"])
+        self.assertEqual(self.deleted, [script["id"]])
+        self.assertEqual(result["probe_cleanup"], {"deleted": [script["id"]], "failed": []})
+        runs = [c for c in self.mock_client.command.call_args_list if c[0][0] == "BatchAdminCmd"]
+        self.assertEqual(runs[0][1]["body"]["command_string"], f'runscript -CloudFile="{script["name"]}"')
+
+    @patch("falcon_mcp.modules.rtr.time.sleep")
+    def test_one_probe_per_platform(self, _sleep):
+        self.plan = [{AID_ONLINE: "ok", AID_OFFLINE: "ok"}]
+        result = self._wait([AID_ONLINE, AID_OFFLINE])
+        self.assertTrue(result["ready"])
+        self.assertEqual(sorted(s["platform"] for s in self.scripts.values()), ["linux", "windows"])
+        self.assertEqual(len(self.deleted), 2)
+        runs = [c for c in self.mock_client.command.call_args_list if c[0][0] == "BatchAdminCmd"]
+        self.assertEqual(len(runs), 2)
+        self.assertTrue(all(len(r[1]["body"]["optional_hosts"]) == 1 for r in runs))
+
+    @patch("falcon_mcp.modules.rtr.time.monotonic")
+    @patch("falcon_mcp.modules.rtr.time.sleep")
+    def test_times_out_with_last_error_and_still_cleans_up(self, _sleep, monotonic):
+        clock = iter(range(0, 10_000, 40))
+        monotonic.side_effect = lambda: next(clock)
+        self.plan = [{AID_ONLINE: "fail"}]
+
+        result = self._wait([AID_ONLINE], timeout=60)
+
+        self.assertFalse(result["ready"])
+        self.assertTrue(result["timed_out"])
+        self.assertEqual(result["not_ready_hosts"][0]["device_id"], AID_ONLINE)
+        self.assertIn("not permitted", result["not_ready_hosts"][0]["last_error"]["stderr"])
+        self.assertEqual(len(self.deleted), 1)
+
+    @patch("falcon_mcp.modules.rtr.time.sleep")
+    def test_deletes_scripts_even_when_a_run_raises(self, _sleep):
+        self.plan = [{AID_ONLINE: "ok"}]
+        wired = self._command
+
+        def command(operation, **kwargs):
+            if operation == "BatchAdminCmd":
+                raise ConnectionError("reset")
+            return wired(operation, **kwargs)
+
+        self.mock_client.command.side_effect = command
+        with self.assertRaises(ConnectionError):
+            self.module.wait_for_sessions(
+                device_ids=[AID_ONLINE], timeout_seconds=60, interval_seconds=5, probe="runscript"
+            )
+        self.assertEqual(len(self.deleted), 1)
+
+    @patch("falcon_mcp.modules.rtr.time.sleep")
+    def test_failed_cleanup_is_reported(self, _sleep):
+        self.plan = [{AID_ONLINE: "ok"}]
+        self.delete_status = 500
+        result = self._wait([AID_ONLINE])
+        self.assertTrue(result["ready"])
+        self.assertEqual(len(result["probe_cleanup"]["failed"]), 1)
+        self.assertIn("warning", result)
+
+    def test_upload_failure_returns_error(self):
+        self.plan = [{AID_ONLINE: "ok"}]
+        self.create_status = 403
+        result = self._wait([AID_ONLINE])
+        self.assertIn("error", result)
+        self.assertEqual(result["phase"], "probe_upload")
+        ops = [c[0][0] for c in self.mock_client.command.call_args_list]
+        self.assertNotIn("BatchAdminCmd", ops)
+
+    @patch("falcon_mcp.modules.rtr.time.monotonic")
+    @patch("falcon_mcp.modules.rtr.time.sleep")
+    def test_unknown_host_is_not_ready(self, _sleep, monotonic):
+        clock = iter(range(0, 10_000, 40))
+        monotonic.side_effect = lambda: next(clock)
+        self.plan = [{AID_ONLINE: "ok"}]
+        unknown = "c" * 32
+        result = self._wait([AID_ONLINE, unknown], timeout=60)
+        self.assertFalse(result["ready"])
+        self.assertEqual([h["device_id"] for h in result["ready_hosts"]], [AID_ONLINE])
+        self.assertEqual(result["not_ready_hosts"][0]["device_id"], unknown)
+
+    @patch("falcon_mcp.modules.rtr.time.sleep")
+    def test_session_probe_is_unchanged_default(self, _sleep):
+        self.mock_client.command.return_value = {
+            "status_code": 201,
+            "body": {"batch_id": "b", "resources": {AID_ONLINE: {"session_id": "s-a", "errors": []}}},
+        }
+        result = self.module.wait_for_sessions(device_ids=[AID_ONLINE], timeout_seconds=60, interval_seconds=5)
+        self.assertTrue(result["ready"])
+        ops = [c[0][0] for c in self.mock_client.command.call_args_list]
+        self.assertEqual(ops, ["BatchInitSessions"])
+        self.assertNotIn("probe_cleanup", result)
