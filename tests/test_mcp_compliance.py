@@ -59,6 +59,9 @@ MUTATING_TOOL_ALLOWLIST: set[str] = {
     "falcon_delete_rtr_session",
     "falcon_run_rtr_read_only_command_on_hosts",
     "falcon_run_falcon_script",
+    "falcon_create_rtr_script",
+    "falcon_delete_rtr_scripts",
+    "falcon_run_rtr_script_on_hosts",
     # shield module
     "falcon_dismiss_shield_check",
     # scheduled_reports module

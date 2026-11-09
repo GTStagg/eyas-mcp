@@ -1,10 +1,10 @@
 <!-- meta:title Real Time Response -->
-<!-- meta:description Initiating and inspecting RTR sessions and for executing read-only RTR commands during host investigations -->
+<!-- meta:description Initiating and inspecting RTR sessions, for executing read-only RTR commands during host investigations, and for managing and running scripts from the tenant's custom RTR script library -->
 <!-- meta:section modules -->
 <!-- meta:link-base /eyas-mcp/ -->
 <!-- frontmatter:sidebar order:10 -->
 
-Initiating and inspecting RTR sessions and for executing read-only RTR commands during host investigations
+Initiating and inspecting RTR sessions, for executing read-only RTR commands during host investigations, and for managing and running scripts from the tenant's custom RTR script library
 
 ## API Scopes
 
@@ -251,6 +251,95 @@ Use this when investigation is complete to free up session resources.
 **Example prompts:**
 
 - "End the RTR session abc123"
+
+### `falcon_search_rtr_scripts`
+
+**Required scopes:** `Real time response (admin):write`
+
+Search the tenant's custom RTR script library.
+
+Custom scripts are scripts your organization uploaded for RTR Admins to run with
+`runscript -CloudFile`. They are separate from the CrowdStrike-published scripts
+listed by falcon_list_falcon_scripts. Use this to find a script's exact name
+before calling falcon_run_rtr_script_on_hosts, or to review what is in the
+library. This only reads the library; it doesn't contact any host.
+Responses include `pagination.total` (the total number of records matching the filter, or null when the API does not report a count) — use it to answer "how many" questions.
+
+**Example prompts:**
+
+- "Which custom RTR scripts are in our library for Windows?"
+
+### `falcon_create_rtr_script`
+
+> [!NOTE]
+> This tool modifies data.
+
+**Required scopes:** `Real time response (admin):write`
+
+Upload a script to the tenant's custom RTR script library.
+
+Use this to stage a script that falcon_run_rtr_script_on_hosts will run. Uploading
+doesn't run anything, but anyone with the chosen permission can run the script
+on hosts afterwards, so review the content first. Prefer `private` unless others
+need it, and delete one-off scripts with falcon_delete_rtr_scripts once they've
+run. Needs the RTR Admin write scope.
+
+**Example prompts:**
+
+- "Upload this PowerShell script to the RTR script library as collect-triage"
+
+### `falcon_delete_rtr_scripts`
+
+> [!CAUTION]
+> This tool performs destructive operations.
+
+**Required scopes:** `Real time response (admin):write`
+
+Delete scripts from the tenant's custom RTR script library.
+
+Use this to remove one-off scripts after they've run, or scripts nobody should
+run any more. Deletion can't be undone. It doesn't affect commands already
+sent to hosts. Needs the RTR Admin write scope.
+
+**Example prompts:**
+
+- "Delete the one-off collect-triage script from the RTR library"
+
+### `falcon_run_rtr_script_on_hosts`
+
+> [!CAUTION]
+> This tool performs destructive operations.
+
+**Required scopes:** `Real time response:read`, `Real time response (admin):write`
+
+Run a script from the custom RTR script library on one or more hosts.
+
+This runs your organization's own code on the hosts with `runscript -CloudFile`,
+so it can change anything on them. Only scripts already in the library can run;
+upload one with falcon_create_rtr_script first. Hosts must be online: nothing is
+queued, and hosts that can't be reached are listed under `failed_hosts`. Hosts
+that haven't finished within the timeout keep running the script. Check them
+later with falcon_check_rtr_admin_command_status and each host's `task_id`
+rather than running the script again. Needs the RTR Admin scope; every run is
+recorded in the RTR audit log.
+
+**Example prompts:**
+
+- "Run the collect-triage custom script on these two hosts"
+
+### `falcon_check_rtr_admin_command_status`
+
+**Required scopes:** `Real time response (admin):write`
+
+Check whether RTR Admin commands sent to hosts have finished, and get their output.
+
+Use this after falcon_run_rtr_script_on_hosts or falcon_run_falcon_script returns
+hosts that hadn't finished within the timeout. It only reads command status; it
+doesn't run anything again.
+
+**Example prompts:**
+
+- "Has the script finished on the hosts that timed out?"
 
 ## Resources
 
