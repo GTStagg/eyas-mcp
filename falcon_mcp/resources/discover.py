@@ -299,6 +299,22 @@ SEARCH_APPLICATIONS_FQL_DOCUMENTATION = """Falcon Query Language (FQL) - Search 
 • Boolean values: true or false (no quotes)
 • Some fields require specific capitalization (check individual field descriptions)
 
+=== LISTING EVERY APPLICATION ===
+• To list every application, omit the filter. falcon_search_applications then uses the
+  query and entities endpoints, and pagination.total counts every application.
+  Without a filter, page with offset (offset + limit can't exceed 10000).
+• name:'*' silently returns 0 results with no error. The * in it is a literal
+  asterisk, not a wildcard.
+• name:*'*' uses the wildcard operator and matches every application. Use it when you
+  need a filter, for example to page past 10000 with the `after` token.
+• Range filters skip applications whose timestamp field is empty, so they don't match
+  everything. The combined and query endpoints return the same count for the same filter.
+  The gap comes from empty fields: most applications have never been used and have no
+  last_used_timestamp, so last_used_timestamp:>'1970-01-01T00:00:00Z' leaves them out.
+  A few also lack first_seen_timestamp and last_updated_timestamp.
+• id:* and name:* can't be parsed (HTTP 400). For negation, put ! after the colon
+  (name:!'x'). The form !name:'x' is rejected.
+
 === COMMON FILTER EXAMPLES ===
 • Find Chrome applications: name:'Chrome'
 • Find applications from Microsoft: vendor:'Microsoft Corporation'

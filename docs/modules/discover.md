@@ -20,7 +20,8 @@ Search for applications discovered in your CrowdStrike environment.
 
 Use this to find applications by name, vendor, or installation details. Consult
 falcon://discover/applications/fql-guide before constructing filter expressions.
-Returns application entities with optional host info and usage data (based on facet).
+Without a filter it lists every application, for example the most recently used
+with sort='last_used_timestamp.desc'. Use fields='compact' for large pages.
 Responses include `pagination.total` (the total number of records matching the filter, or null when the API does not report a count) — use it to answer "how many" questions.
 
 **Example prompts:**

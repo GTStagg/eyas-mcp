@@ -387,5 +387,170 @@ class TestDiscoverModule(unittest.TestCase):
         self.assertIn("error", result[0])
 
 
+
+def _app(app_id: str, hostname: str = "PC-1") -> dict:
+    return {
+        "id": app_id,
+        "name": f"App {app_id}",
+        "vendor": "Vendor",
+        "version": "1.0",
+        "software_type": "application",
+        "is_suspicious": False,
+        "installation_paths": ["C:\\App"],
+        "last_used_timestamp": "2026-11-09T17:00:00Z",
+        "architectures": ["x64"],
+        "host": {"id": "h1", "hostname": hostname, "os_version": "Windows 11"},
+    }
+
+
+def _ok(resources: list, total: int | None = None) -> dict:
+    body: dict = {"resources": resources}
+    if total is not None:
+        body["meta"] = {"pagination": {"total": total}}
+    return {"status_code": 200, "body": body}
+
+
+class TestSearchApplicationsWithoutFilter(unittest.TestCase):
+    """falcon_search_applications lists every application when no filter is given."""
+
+    def setUp(self):
+        self.client = MagicMock(spec=FalconClient)
+        self.module = DiscoverModule(self.client)
+
+    def _call(self, **kwargs):
+        params = {
+            "filter": None,
+            "facet": None,
+            "limit": 100,
+            "sort": None,
+            "offset": None,
+            "after": None,
+            "fields": "full",
+        }
+        params.update(kwargs)
+        return self.module.search_applications(**params)
+
+    def test_uses_query_then_entities(self):
+        self.client.command.side_effect = [
+            _ok(["a2", "a1"], total=285000),
+            _ok([_app("a1"), _app("a2")]),
+        ]
+
+        result = self._call(sort="last_used_timestamp.desc")
+
+        calls = self.client.command.call_args_list
+        self.assertEqual(calls[0][0][0], "query_applications")
+        self.assertEqual(
+            calls[0][1]["parameters"],
+            {"limit": 100, "offset": 0, "sort": "last_used_timestamp.desc"},
+        )
+        self.assertNotIn("filter", calls[0][1]["parameters"])
+        self.assertEqual(calls[1][0][0], "get_applications")
+        self.assertEqual(calls[1][1]["parameters"], {"ids": ["a2", "a1"]})
+        # The query step's sort order survives hydration.
+        self.assertEqual([row["id"] for row in result["results"]], ["a2", "a1"])
+        self.assertEqual(result["pagination"]["total"], 285000)
+        self.assertNotIn("filter_used", result)
+
+    def test_empty_filter_string_also_lists_everything(self):
+        self.client.command.side_effect = [_ok([], total=0)]
+        result = self._call(filter="")
+        self.assertEqual(self.client.command.call_args[0][0], "query_applications")
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["pagination"]["total"], 0)
+
+    def test_pages_query_and_entities_in_hundreds(self):
+        first = [f"a{i}" for i in range(100)]
+        second = [f"a{i}" for i in range(100, 150)]
+        self.client.command.side_effect = [
+            _ok(first, total=1000),
+            _ok(second, total=1000),
+            _ok([_app(i) for i in first]),
+            _ok([_app(i) for i in second]),
+        ]
+
+        result = self._call(limit=150, offset=200)
+
+        calls = self.client.command.call_args_list
+        self.assertEqual(calls[0][1]["parameters"], {"limit": 100, "offset": 200})
+        self.assertEqual(calls[1][1]["parameters"], {"limit": 50, "offset": 300})
+        self.assertEqual(len(calls[2][1]["parameters"]["ids"]), 100)
+        self.assertEqual(len(calls[3][1]["parameters"]["ids"]), 50)
+        self.assertEqual(len(result["results"]), 150)
+        self.assertEqual(result["pagination"]["offset"], 200)
+        self.assertEqual(result["pagination"]["next_offset"], 350)
+
+    def test_stops_when_query_runs_out(self):
+        self.client.command.side_effect = [
+            _ok(["a1", "a2"], total=2),
+            _ok([_app("a1"), _app("a2")]),
+        ]
+        result = self._call(limit=500)
+        self.assertEqual(self.client.command.call_count, 2)
+        self.assertIsNone(result["pagination"]["next_offset"])
+
+    def test_refuses_window_past_query_ceiling(self):
+        result = self._call(offset=9950, limit=100)
+        self.assertIsInstance(result, list)
+        self.assertIn("error", result[0])
+        self.client.command.assert_not_called()
+
+    def test_compact_fields(self):
+        self.client.command.side_effect = [
+            _ok(["a1"], total=1),
+            _ok([_app("a1", hostname="WS-9")]),
+        ]
+        result = self._call(fields="compact")
+        self.assertEqual(
+            result["results"][0],
+            {
+                "id": "a1",
+                "name": "App a1",
+                "vendor": "Vendor",
+                "version": "1.0",
+                "software_type": "application",
+                "is_suspicious": False,
+                "installation_paths": ["C:\\App"],
+                "last_used_timestamp": "2026-11-09T17:00:00Z",
+                "host": {"id": "h1", "hostname": "WS-9"},
+            },
+        )
+
+    def test_query_error(self):
+        self.client.command.return_value = {
+            "status_code": 403,
+            "body": {"errors": [{"code": 403, "message": "denied"}]},
+        }
+        result = self._call()
+        self.assertIsInstance(result, list)
+        self.assertIn("error", result[0])
+
+    def test_entities_error(self):
+        self.client.command.side_effect = [
+            _ok(["a1"], total=1),
+            {"status_code": 500, "body": {"errors": [{"code": 500, "message": "boom"}]}},
+        ]
+        result = self._call()
+        self.assertIsInstance(result, list)
+        self.assertIn("error", result[0])
+
+    def test_filtered_call_passes_after_and_compacts(self):
+        self.client.command.return_value = {
+            "status_code": 200,
+            "body": {
+                "meta": {"pagination": {"total": 5, "after": "next-token"}},
+                "resources": [_app("a1")],
+            },
+        }
+        result = self._call(filter="name:*'*'", facet="host_info", after="tok", fields="compact")
+        params = self.client.command.call_args[1]["parameters"]
+        self.assertEqual(self.client.command.call_args[0][0], "combined_applications")
+        self.assertEqual(params["after"], "tok")
+        self.assertEqual(params["facet"], "host_info")
+        self.assertEqual(result["pagination"]["next"], "next-token")
+        self.assertEqual(result["results"][0]["host"], {"id": "h1", "hostname": "PC-1"})
+        self.assertNotIn("architectures", result["results"][0])
+
+
 if __name__ == "__main__":
     unittest.main()

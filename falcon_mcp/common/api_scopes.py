@@ -50,6 +50,8 @@ API_SCOPE_REQUIREMENTS = {
     "combinedQueryVulnerabilities": ["Vulnerabilities:read"],
     # Discover operations
     "combined_applications": ["Assets:read"],
+    "query_applications": ["Assets:read"],
+    "get_applications": ["Assets:read"],
     "combined_hosts": ["Assets:read"],
     # Cloud operations
     "ReadContainerCombined": ["Falcon Container Image:read"],
