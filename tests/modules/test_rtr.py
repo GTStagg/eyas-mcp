@@ -3,6 +3,7 @@ Tests for the RTR module.
 """
 
 import json
+from typing import Any
 from unittest.mock import patch
 
 from mcp.server.fastmcp import FastMCP
@@ -39,6 +40,7 @@ class TestRTRModule(TestModules):
             "falcon_check_rtr_command_status",
             "falcon_list_rtr_session_files",
             "falcon_delete_rtr_session",
+            "falcon_wait_for_rtr_sessions",
             "falcon_search_rtr_scripts",
             "falcon_create_rtr_script",
             "falcon_delete_rtr_scripts",
@@ -1463,3 +1465,74 @@ class TestRTRCustomScripts(TestModules):
         self.assertEqual(result["complete"], 1)
         self.assertEqual(result["results"][0]["stdout"], "ok")
         self.assertFalse(result["results"][1]["complete"])
+
+
+class TestRTRWaitForSessions(TestModules):
+    """falcon_wait_for_rtr_sessions retries until hosts connect or time runs out."""
+
+    def setUp(self):
+        self.setup_module(RTRModule)
+
+    def _init(self, connected: list[str], failed: list[str]) -> dict:
+        resources: dict[str, dict[str, Any]] = {
+            aid: {"session_id": f"s-{aid[0]}", "errors": []} for aid in connected
+        }
+        resources.update(
+            {aid: {"session_id": "", "errors": [{"code": 404, "message": "x"}]} for aid in failed}
+        )
+        return {"status_code": 201, "body": {"batch_id": "b", "resources": resources}}
+
+    def test_has_write_hints(self):
+        server = FastMCP("rtr")
+        self.module.register_tools(server)
+        self.assertEqual(
+            server._tool_manager._tools["falcon_wait_for_rtr_sessions"].annotations,
+            ToolAnnotations(
+                readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
+            ),
+        )
+
+    @patch("falcon_mcp.modules.rtr.time.sleep")
+    def test_retries_only_hosts_not_ready(self, mock_sleep):
+        self.mock_client.command.side_effect = [
+            self._init([AID_ONLINE], [AID_OFFLINE]),
+            self._init([AID_OFFLINE], []),
+        ]
+
+        result = self.module.wait_for_sessions(
+            device_ids=[AID_ONLINE, AID_OFFLINE], timeout_seconds=60, interval_seconds=5
+        )
+
+        second = self.mock_client.command.call_args_list[1]
+        self.assertEqual(second[1]["body"]["host_ids"], [AID_OFFLINE])
+        self.assertTrue(result["ready"])
+        self.assertFalse(result["timed_out"])
+        self.assertEqual(result["attempts"], 2)
+        self.assertEqual(len(result["ready_hosts"]), 2)
+        mock_sleep.assert_called_once()
+
+    @patch("falcon_mcp.modules.rtr.time.sleep")
+    @patch("falcon_mcp.modules.rtr.time.monotonic")
+    def test_times_out_with_last_error(self, mock_monotonic, mock_sleep):
+        mock_monotonic.side_effect = [0, 10, 40, 40]
+        self.mock_client.command.side_effect = [
+            self._init([], [AID_OFFLINE]),
+            self._init([], [AID_OFFLINE]),
+        ]
+
+        result = self.module.wait_for_sessions(
+            device_ids=[AID_OFFLINE], timeout_seconds=30, interval_seconds=15
+        )
+
+        self.assertFalse(result["ready"])
+        self.assertTrue(result["timed_out"])
+        self.assertEqual(result["attempts"], 2)
+        self.assertEqual(result["not_ready_hosts"][0]["device_id"], AID_OFFLINE)
+        self.assertEqual(result["not_ready_hosts"][0]["last_error"][0]["code"], 404)
+
+    def test_rejects_bad_ids_without_api_calls(self):
+        result = self.module.wait_for_sessions(
+            device_ids=["not-an-aid"], timeout_seconds=30, interval_seconds=5
+        )
+        self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()

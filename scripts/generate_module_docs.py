@@ -302,6 +302,9 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
         "Show me alert volume per day for the last 30 days",
         "How many distinct hosts have critical alerts?",
     ],
+    "falcon_close_host_detections": [
+        "Close every open detection on host abc123 as a true positive",
+    ],
     "falcon_update_detections": [
         "Mark detection abc123 as in_progress",
         "Assign detection abc123 to analyst@example.com",
@@ -450,6 +453,10 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
         "List all firewall policies",
         "Show enabled sensor update policies for Windows",
         "Find prevention policies whose name contains 'default'",
+    ],
+    "falcon_get_prevention_posture": [
+        "Which prevention policies detect but don't block?",
+        "Show me disabled or unassigned Windows prevention policies",
     ],
     "falcon_search_policy_members": [
         "What hosts are assigned to firewall policy 1a2b3c?",
@@ -649,6 +656,9 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
     ],
     "falcon_delete_rtr_session": [
         "End the RTR session abc123",
+    ],
+    "falcon_wait_for_rtr_sessions": [
+        "Wait until host abc123 accepts RTR again after moving it into the new group",
     ],
     "falcon_search_rtr_scripts": [
         "Which custom RTR scripts are in our library for Windows?",

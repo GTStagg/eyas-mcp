@@ -65,6 +65,25 @@ Responses include `pagination.total` (the total number of records matching the f
 
 - "What hosts are assigned to firewall policy 1a2b3c?"
 
+### `falcon_get_prevention_posture`
+
+**Required scopes:** `Prevention Policies:read`
+
+Summarize prevention policy posture: what is disabled, unassigned or only detecting.
+
+Use this to answer questions like "which prevention policies detect but don't
+block?" across the tenant. For each prevention policy it reports every ML slider's
+detection and prevention level, how many toggles are on, its host groups, and
+flags: `disabled` (the policy is off), `no_host_groups` (it isn't assigned to any
+host group, so it applies to no hosts; never set on `platform_default`) and
+`detect_only_sliders` (an ML slider detects with prevention off). Returns a summary with counts per platform and per flag, plus the policies.
+For the full settings of one policy use falcon_search_policies. Read-only.
+
+**Example prompts:**
+
+- "Which prevention policies detect but don't block?"
+- "Show me disabled or unassigned Windows prevention policies"
+
 ### `falcon_create_policy`
 
 > [!NOTE]

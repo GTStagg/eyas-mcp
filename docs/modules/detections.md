@@ -96,6 +96,27 @@ the caller can retry only the remainder rather than re-applying non-idempotent a
 - "Mark detection abc123 as a true positive and close it"
 - "Remove all fc/ prefixed tags from this detection"
 
+### `falcon_close_host_detections`
+
+> [!CAUTION]
+> This tool performs destructive operations.
+
+**Required scopes:** `Alerts:read`, `Alerts:write`
+
+Close every open detection on one host, with one resolution and comment.
+
+Finds all detections on the host whose status is new, in_progress or reopened,
+then closes them and tags them with the resolution. Use this once a host has been
+investigated and cleaned up, or confirmed as a false positive, to clear its queue
+in one step. Review the host's detections with falcon_search_detections first;
+this closes all of them, whatever their severity. Running it again only touches
+detections that are still open. Returns how many were found and closed, and the
+composite IDs closed.
+
+**Example prompts:**
+
+- "Close every open detection on host abc123 as a true positive"
+
 ## Resources
 
 - **`falcon://detections/search/fql-guide`**: Contains the guide for the `filter` param of the `falcon_search_detections` tool.

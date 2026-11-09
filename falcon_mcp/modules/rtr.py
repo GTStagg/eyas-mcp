@@ -410,6 +410,18 @@ class RTRModule(BaseModule):
 
         self._add_tool(
             server=server,
+            method=self.wait_for_sessions,
+            name="wait_for_rtr_sessions",
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=False,
+                openWorldHint=True,
+            ),
+        )
+
+        self._add_tool(
+            server=server,
             method=self.search_custom_scripts,
             name="search_rtr_scripts",
         )
@@ -1211,6 +1223,80 @@ class RTRModule(BaseModule):
         if "error" not in result:
             result["script_name"] = script_name
         return result
+
+    def wait_for_sessions(
+        self,
+        device_ids: list[str] = Field(
+            description=(
+                "Host agent IDs (AIDs, 32 hex characters) to wait for. "
+                f"Duplicates are dropped. Max: {MAX_BATCH_HOSTS}."
+            ),
+        ),
+        timeout_seconds: int = Field(
+            default=180,
+            ge=30,
+            le=600,
+            description="Total seconds to keep trying before giving up. Max: 600.",
+        ),
+        interval_seconds: int = Field(
+            default=15,
+            ge=5,
+            le=60,
+            description="Seconds to wait between attempts.",
+        ),
+    ) -> dict[str, Any]:
+        """Wait until hosts accept RTR sessions, retrying until they do or time runs out.
+
+        Use this after a change that briefly blocks RTR on a host, such as moving it into
+        a new host group or policy, or a reboot, before running RTR commands or scripts.
+        Each attempt opens an RTR batch session on the hosts that aren't ready yet; the
+        first attempt is immediate. It runs no commands, and the sessions expire on their
+        own. Returns `ready` (true when every host connected), the hosts that connected
+        with their session IDs, and the last error for hosts that never did.
+        """
+        hosts, refusal = _validate_device_ids(device_ids)
+        if refusal:
+            return _format_error_response(refusal, operation="BatchInitSessions")
+
+        started = time.monotonic()
+        deadline = started + timeout_seconds
+        connected: dict[str, str] = {}
+        last_errors: dict[str, Any] = {}
+        attempts = 0
+        while True:
+            attempts += 1
+            pending = [aid for aid in hosts if aid not in connected]
+            batch = self._open_batch_sessions(pending, 30)
+            if "error" in batch:
+                for aid in pending:
+                    last_errors[aid] = batch.get("error")
+            else:
+                connected.update(batch["sessions"])
+                for failure in batch["failed_hosts"]:
+                    last_errors[failure["device_id"]] = failure["errors"]
+                for aid in batch["sessions"]:
+                    last_errors.pop(aid, None)
+
+            if len(connected) == len(hosts):
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(interval_seconds, remaining))
+
+        not_ready = [aid for aid in hosts if aid not in connected]
+        return {
+            "ready": not not_ready,
+            "timed_out": bool(not_ready),
+            "attempts": attempts,
+            "waited_seconds": round(time.monotonic() - started),
+            "ready_hosts": [
+                {"device_id": aid, "session_id": connected[aid]} for aid in hosts if aid in connected
+            ],
+            "not_ready_hosts": [
+                {"device_id": aid, "last_error": last_errors.get(aid)} for aid in not_ready
+            ],
+        }
 
     def search_custom_scripts(
         self,

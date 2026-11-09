@@ -21,7 +21,7 @@ Required API Scopes:
 - Content Update Policies: read, write
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server import FastMCP
 from mcp.server.fastmcp.resources import TextResource
@@ -34,6 +34,72 @@ from falcon_mcp.modules.base import BaseModule
 from falcon_mcp.resources.policies import SEARCH_POLICIES_FQL_DOCUMENTATION
 
 logger = get_logger(__name__)
+
+# Prevention posture: ML slider levels that mean the slider is off.
+_SLIDER_OFF_LEVELS = frozenset({"", "DISABLED", "OFF"})
+_POSTURE_PLATFORMS = {"windows": "Windows", "mac": "Mac", "linux": "Linux"}
+POSTURE_PAGE_SIZE = 500
+MAX_POSTURE_POLICIES = 5000
+
+
+def _slider_active(level: Any) -> bool:
+    """True when an ML slider level is set to anything other than off."""
+    return isinstance(level, str) and level.upper() not in _SLIDER_OFF_LEVELS
+
+
+def _summarize_prevention_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    """Reduce one prevention policy to its posture: sliders, toggle counts and flags."""
+    sliders: dict[str, dict[str, Any]] = {}
+    toggles_on = 0
+    toggles_total = 0
+    for category in policy.get("prevention_settings") or []:
+        if not isinstance(category, dict):
+            continue
+        for setting in category.get("settings") or []:
+            if not isinstance(setting, dict):
+                continue
+            value = setting.get("value") or {}
+            if setting.get("type") == "mlslider":
+                sliders[str(setting.get("id"))] = {
+                    "detection": value.get("detection"),
+                    "prevention": value.get("prevention"),
+                }
+            elif setting.get("type") == "toggle":
+                toggles_total += 1
+                if value.get("enabled") is True:
+                    toggles_on += 1
+
+    detect_only = sorted(
+        slider_id
+        for slider_id, levels in sliders.items()
+        if _slider_active(levels["detection"]) and not _slider_active(levels["prevention"])
+    )
+    groups = [
+        {"id": g.get("id"), "name": g.get("name")}
+        for g in policy.get("groups") or []
+        if isinstance(g, dict) and g.get("id")
+    ]
+    flags: list[str] = []
+    if policy.get("enabled") is False:
+        flags.append("disabled")
+    # A platform's default policy covers every host no other policy claims, so it
+    # needs no groups.
+    if not groups and policy.get("name") != "platform_default":
+        flags.append("no_host_groups")
+    if detect_only:
+        flags.append("detect_only_sliders")
+    return {
+        "id": policy.get("id"),
+        "name": policy.get("name"),
+        "platform": policy.get("platform_name"),
+        "enabled": policy.get("enabled"),
+        "groups": groups,
+        "ml_sliders": sliders,
+        "detect_only_sliders": detect_only,
+        "toggles_enabled": toggles_on,
+        "toggles_total": toggles_total,
+        "flags": flags,
+    }
 
 # Valid policy types (the discriminator values exposed to the agent).
 POLICY_TYPES = (
@@ -294,6 +360,12 @@ class PoliciesModule(BaseModule):
 
         self._add_tool(
             server=server,
+            method=self.get_prevention_posture,
+            name="get_prevention_posture",
+        )
+
+        self._add_tool(
+            server=server,
             method=self.create_policy,
             name="create_policy",
             annotations=ToolAnnotations(
@@ -534,6 +606,93 @@ class PoliciesModule(BaseModule):
             )
 
         return self._build_pagination_envelope(policies or [], pagination, filter)
+
+    # ---- Prevention posture -------------------------------------------------------
+
+    def get_prevention_posture(
+        self,
+        platform: Literal["windows", "mac", "linux"] | None = Field(
+            default=None,
+            description="Only summarize prevention policies for this platform.",
+        ),
+        only_flagged: bool = Field(
+            default=False,
+            description=(
+                "Return only policies with at least one flag. The summary still counts "
+                "every policy."
+            ),
+        ),
+    ) -> dict[str, Any]:
+        """Summarize prevention policy posture: what is disabled, unassigned or only detecting.
+
+        Use this to answer questions like "which prevention policies detect but don't
+        block?" across the tenant. For each prevention policy it reports every ML slider's
+        detection and prevention level, how many toggles are on, its host groups, and
+        flags: `disabled` (the policy is off), `no_host_groups` (it isn't assigned to any
+        host group, so it applies to no hosts; never set on `platform_default`) and
+        `detect_only_sliders` (an ML slider detects with prevention off). Returns a summary with counts per platform and per flag, plus the policies.
+        For the full settings of one policy use falcon_search_policies. Read-only.
+        """
+        # With no filter at all, queryCombinedPreventionPolicies has been seen to leave
+        # some policies out (including platform defaults) while still reporting a total
+        # that matches. Any filter returns them, so match every policy explicitly.
+        fql = "enabled:true,enabled:false"
+        if platform is not None:
+            platform_name = _POSTURE_PLATFORMS.get(platform)
+            if platform_name is None:
+                return _format_error_response(
+                    f"platform must be one of: {', '.join(_POSTURE_PLATFORMS)}.",
+                    operation="queryCombinedPreventionPolicies",
+                )
+            fql = f"platform_name:'{platform_name}'"
+
+        policies: list[dict[str, Any]] = []
+        truncated = False
+        while True:
+            page = self._base_search_api_call(
+                operation="queryCombinedPreventionPolicies",
+                search_params={"filter": fql, "limit": POSTURE_PAGE_SIZE, "offset": len(policies)},
+                error_message="Failed to list prevention policies",
+                default_result=[],
+            )
+            if self._is_error(page):
+                return page
+            policies.extend(p for p in page if isinstance(p, dict))
+            if len(page) < POSTURE_PAGE_SIZE:
+                break
+            if len(policies) >= MAX_POSTURE_POLICIES:
+                truncated = True
+                break
+
+        rows = [_summarize_prevention_policy(p) for p in policies]
+        by_platform: dict[str, int] = {}
+        by_flag: dict[str, int] = {"disabled": 0, "no_host_groups": 0, "detect_only_sliders": 0}
+        for row in rows:
+            key = str(row["platform"] or "unknown")
+            by_platform[key] = by_platform.get(key, 0) + 1
+            for flag in row["flags"]:
+                by_flag[flag] += 1
+
+        flagged = sum(1 for row in rows if row["flags"])
+        rows.sort(key=lambda r: (str(r["platform"] or ""), str(r["name"] or "").lower()))
+        if only_flagged:
+            rows = [row for row in rows if row["flags"]]
+
+        result: dict[str, Any] = {
+            "summary": {
+                "policies": len(policies),
+                "by_platform": by_platform,
+                "flagged": flagged,
+                "by_flag": by_flag,
+            },
+            "policies": rows,
+        }
+        if truncated:
+            result["warning"] = (
+                f"Only the first {MAX_POSTURE_POLICIES} policies were summarized. "
+                "Narrow the request with platform."
+            )
+        return result
 
     # ---- Members ------------------------------------------------------------------
 

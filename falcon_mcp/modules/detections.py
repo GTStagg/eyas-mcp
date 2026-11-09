@@ -4,6 +4,7 @@ Detections module for Falcon MCP Server
 This module provides tools for accessing and analyzing CrowdStrike Falcon detections.
 """
 
+import re
 from textwrap import dedent
 from typing import Any, Literal
 
@@ -12,6 +13,7 @@ from mcp.server.fastmcp.resources import TextResource
 from mcp.types import ToolAnnotations
 from pydantic import AnyUrl, Field
 
+from falcon_mcp.common.errors import _format_error_response
 from falcon_mcp.common.logging import get_logger
 from falcon_mcp.modules.base import BaseModule
 from falcon_mcp.resources.detections import (
@@ -23,6 +25,15 @@ logger = get_logger(__name__)
 # PatchEntitiesAlertsV3 rejects requests carrying more than this many composite
 # IDs with HTTP 413 ("request too large").
 MAX_UPDATE_COMPOSITE_IDS = 1000
+
+# Host agent IDs are 32 hex characters; the ID is written into an FQL filter.
+DEVICE_ID_PATTERN = re.compile(r"[0-9a-fA-F]{32}")
+OPEN_STATUSES = ("new", "in_progress", "reopened")
+RESOLUTION_TAGS = ("true_positive", "false_positive", "ignored")
+# GetQueriesAlertsV2 pages; a host with more open detections than this is reported
+# as truncated, and running the tool again closes the rest.
+HOST_DETECTIONS_PAGE_SIZE = 1000
+MAX_HOST_DETECTIONS = 10000
 
 
 class DetectionsModule(BaseModule):
@@ -60,6 +71,18 @@ class DetectionsModule(BaseModule):
                 readOnlyHint=False,
                 destructiveHint=True,
                 idempotentHint=False,
+                openWorldHint=True,
+            ),
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.close_host_detections,
+            name="close_host_detections",
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=True,
+                idempotentHint=True,
                 openWorldHint=True,
             ),
         )
@@ -583,3 +606,113 @@ class DetectionsModule(BaseModule):
             }
 
         return result
+
+    def close_host_detections(
+        self,
+        device_id: str = Field(
+            description="Host agent ID (AID, 32 hex characters) whose open detections to close.",
+        ),
+        resolution: Literal["true_positive", "false_positive", "ignored"] = Field(
+            description=(
+                "Resolution tag recorded on every closed detection, as shown in the "
+                "console's Resolution column."
+            ),
+        ),
+        comment: str | None = Field(
+            default=None,
+            description="Comment appended to every closed detection, for the audit trail.",
+        ),
+    ) -> dict[str, Any]:
+        """Close every open detection on one host, with one resolution and comment.
+
+        Finds all detections on the host whose status is new, in_progress or reopened,
+        then closes them and tags them with the resolution. Use this once a host has been
+        investigated and cleaned up, or confirmed as a false positive, to clear its queue
+        in one step. Review the host's detections with falcon_search_detections first;
+        this closes all of them, whatever their severity. Running it again only touches
+        detections that are still open. Returns how many were found and closed, and the
+        composite IDs closed.
+        """
+        if not isinstance(device_id, str) or not DEVICE_ID_PATTERN.fullmatch(device_id):
+            return _format_error_response(
+                f"Invalid host AID {device_id!r}. AIDs are 32 hexadecimal characters.",
+                operation="GetQueriesAlertsV2",
+            )
+        if resolution not in RESOLUTION_TAGS:
+            return _format_error_response(
+                f"resolution must be one of: {', '.join(RESOLUTION_TAGS)}.",
+                operation="PatchEntitiesAlertsV3",
+            )
+        if comment is not None and not comment.strip():
+            return _format_error_response(
+                "comment must not be empty.", operation="PatchEntitiesAlertsV3"
+            )
+
+        aid = device_id.lower()
+        statuses = ",".join(f"'{status}'" for status in OPEN_STATUSES)
+        fql = f"device.device_id:'{aid}'+status:[{statuses}]"
+
+        ids: list[str] = []
+        truncated = False
+        while True:
+            page = self._base_search_api_call(
+                operation="GetQueriesAlertsV2",
+                search_params={
+                    "filter": fql,
+                    "limit": HOST_DETECTIONS_PAGE_SIZE,
+                    "offset": len(ids),
+                    "include_hidden": True,
+                },
+                error_message="Failed to search the host's open detections",
+                default_result=[],
+            )
+            if isinstance(page, dict):
+                return {**page, "phase": "search"}
+            new_ids = [i for i in page if isinstance(i, str) and i not in ids]
+            ids.extend(new_ids)
+            if len(page) < HOST_DETECTIONS_PAGE_SIZE or not new_ids:
+                break
+            if len(ids) >= MAX_HOST_DETECTIONS:
+                truncated = True
+                break
+
+        summary: dict[str, Any] = {
+            "device_id": aid,
+            "resolution": resolution,
+            "found": len(ids),
+            "closed": 0,
+            "composite_ids": [],
+        }
+        if truncated:
+            summary["warning"] = (
+                f"The host has more than {MAX_HOST_DETECTIONS} open detections. Only the "
+                "first batch was closed; run this again to close the rest."
+            )
+        if not ids:
+            return summary
+
+        action_parameters: list[dict[str, Any]] = [
+            {"name": "update_status", "value": "closed"},
+            {"name": "add_tag", "value": resolution},
+        ]
+        if comment is not None:
+            action_parameters.append({"name": "append_comment", "value": comment})
+
+        for start in range(0, len(ids), MAX_UPDATE_COMPOSITE_IDS):
+            batch = ids[start : start + MAX_UPDATE_COMPOSITE_IDS]
+            result = self._base_query_api_call(
+                operation="PatchEntitiesAlertsV3",
+                body_params={"action_parameters": action_parameters, "composite_ids": batch},
+                error_message="Failed to close detections",
+                default_result=[],
+            )
+            if isinstance(result, dict):
+                return {
+                    **summary,
+                    **result,
+                    "phase": "close",
+                    "failed_and_remaining_ids": ids[start:],
+                }
+            summary["closed"] += len(batch)
+            summary["composite_ids"].extend(batch)
+        return summary
