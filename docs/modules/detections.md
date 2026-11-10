@@ -106,7 +106,10 @@ the caller can retry only the remainder rather than re-applying non-idempotent a
 Close every open detection on one host, with one resolution and comment.
 
 Finds all detections on the host whose status is new, in_progress or reopened,
-then closes them and tags them with the resolution. Use this once a host has been
+then closes them and tags them with the resolution. That includes endpoint
+detections and alerts that name the host in other fields, such as Next-Gen SIEM
+correlation detections; an alert that also names another host is left open and
+listed unless include_multi_host is true. Use this once a host has been
 investigated and cleaned up, or confirmed as a false positive, to clear its queue
 in one step. Review the host's detections with falcon_search_detections first;
 this closes all of them, whatever their severity. Running it again only touches

@@ -1660,11 +1660,40 @@ if __name__ == "__main__":
 HOST_AID = "c" * 32
 
 
+OTHER_AID = "b" * 32
+OPEN = "+status:['new','in_progress','reopened']"
+
+
 class TestCloseHostDetections(TestModules):
     """falcon_close_host_detections closes everything open on one host."""
 
     def setUp(self):
         self.setup_module(DetectionsModule)
+
+    def _fake(self, host_pages=None, related_pages=None, records=None, patch=None):
+        """Route client.command by operation and filter; record PATCH bodies."""
+        host_pages = list(host_pages or [[]])
+        related_pages = list(related_pages or [[]])
+        records = records or {}
+        self.patches = []
+
+        def command(operation, **kwargs):
+            if operation == "GetQueriesAlertsV2":
+                fql = kwargs["parameters"]["filter"]
+                pages = host_pages if fql.startswith("device.device_id:") else related_pages
+                return {"status_code": 200, "body": {"resources": pages.pop(0) if pages else []}}
+            if operation == "PostEntitiesAlertsV2":
+                ids = kwargs["body"]["composite_ids"]
+                return {
+                    "status_code": 200,
+                    "body": {"resources": [records[i] for i in ids if i in records]},
+                }
+            if operation == "PatchEntitiesAlertsV3":
+                self.patches.append(kwargs["body"])
+                return patch or {"status_code": 200, "body": {"resources": []}}
+            raise AssertionError(operation)
+
+        self.mock_client.command.side_effect = command
 
     def test_has_destructive_hints(self):
         self.module.register_tools(self.mock_server)
@@ -1676,10 +1705,7 @@ class TestCloseHostDetections(TestModules):
         )
 
     def test_closes_open_detections_with_resolution(self):
-        self.mock_client.command.side_effect = [
-            {"status_code": 200, "body": {"resources": ["d1", "d2"]}},
-            {"status_code": 200, "body": {"resources": []}},
-        ]
+        self._fake(host_pages=[["d1", "d2"]])
 
         result = self.module.close_host_detections(
             device_id=HOST_AID.upper(), resolution="true_positive", comment="cleaned up"
@@ -1688,19 +1714,28 @@ class TestCloseHostDetections(TestModules):
         self.mock_client.command.assert_any_call(
             "GetQueriesAlertsV2",
             parameters={
+                "filter": f"device.device_id:'{HOST_AID}'{OPEN}",
+                "limit": 1000,
+                "offset": 0,
+                "include_hidden": True,
+            },
+        )
+        self.mock_client.command.assert_any_call(
+            "GetQueriesAlertsV2",
+            parameters={
                 "filter": (
-                    f"device.device_id:'{HOST_AID}'+status:['new','in_progress','reopened']"
+                    f"(agent_id:'{HOST_AID}',enriched_entities.aids:'{HOST_AID}',"
+                    f"users.aid:'{HOST_AID}'){OPEN}"
                 ),
                 "limit": 1000,
                 "offset": 0,
                 "include_hidden": True,
             },
         )
-        patch_call = self.mock_client.command.call_args_list[1]
-        self.assertEqual(patch_call[0][0], "PatchEntitiesAlertsV3")
-        self.assertEqual(patch_call[1]["body"]["composite_ids"], ["d1", "d2"])
+        self.assertEqual(len(self.patches), 1)
+        self.assertEqual(self.patches[0]["composite_ids"], ["d1", "d2"])
         self.assertEqual(
-            patch_call[1]["body"]["action_parameters"],
+            self.patches[0]["action_parameters"],
             [
                 {"name": "update_status", "value": "closed"},
                 {"name": "add_tag", "value": "true_positive"},
@@ -1710,9 +1745,62 @@ class TestCloseHostDetections(TestModules):
         self.assertEqual(result["found"], 2)
         self.assertEqual(result["closed"], 2)
         self.assertEqual(result["composite_ids"], ["d1", "d2"])
+        self.assertNotIn("skipped_multi_host", result)
+
+    def test_closes_ngsiem_alerts_that_name_only_this_host(self):
+        records = {
+            "n1": {"composite_id": "n1", "product": "ngsiem", "enriched_entities": {"aids": [HOST_AID]}},
+            "n2": {"composite_id": "n2", "product": "ngsiem", "agent_id": HOST_AID.upper()},
+            "n3": {"composite_id": "n3", "product": "ngsiem", "users": [{"aid": HOST_AID}, {"aid": None}]},
+        }
+        self._fake(host_pages=[["d1"]], related_pages=[["d1", "n1", "n2", "n3"]], records=records)
+
+        result = self.module.close_host_detections(
+            device_id=HOST_AID, resolution="true_positive", comment=None
+        )
+
+        self.assertEqual(self.patches[0]["composite_ids"], ["d1", "n1", "n2", "n3"])
+        self.assertEqual(result["closed"], 4)
+        self.assertEqual(
+            result["matched_by"],
+            {"device_id": 1, "related_fields_this_host_only": 3, "related_fields_multi_host": 0},
+        )
+
+    def test_leaves_multi_host_alerts_open_by_default(self):
+        records = {
+            "n1": {"composite_id": "n1", "enriched_entities": {"aids": [HOST_AID]}},
+            "m1": {"composite_id": "m1", "agent_id": HOST_AID, "users": [{"aid": OTHER_AID}]},
+            "m2": {
+                "composite_id": "m2",
+                "enriched_entities": {"aids": [HOST_AID]},
+                "has_truncated_entities": True,
+            },
+        }
+        # "gone" is not returned by the entity lookup, so it can't be checked.
+        self._fake(related_pages=[["n1", "m1", "m2", "gone"]], records=records)
+
+        result = self.module.close_host_detections(
+            device_id=HOST_AID, resolution="ignored", comment=None
+        )
+
+        self.assertEqual(self.patches[0]["composite_ids"], ["n1"])
+        self.assertEqual(result["skipped_multi_host"]["count"], 3)
+        self.assertEqual(result["skipped_multi_host"]["composite_ids"], ["m1", "m2", "gone"])
+
+    def test_include_multi_host_closes_them_too(self):
+        records = {"m1": {"composite_id": "m1", "agent_id": HOST_AID, "users": [{"aid": OTHER_AID}]}}
+        self._fake(related_pages=[["m1"]], records=records)
+
+        result = self.module.close_host_detections(
+            device_id=HOST_AID, resolution="ignored", comment=None, include_multi_host=True
+        )
+
+        self.assertEqual(self.patches[0]["composite_ids"], ["m1"])
+        self.assertEqual(result["closed"], 1)
+        self.assertNotIn("skipped_multi_host", result)
 
     def test_nothing_open_makes_no_update(self):
-        self.mock_client.command.return_value = {"status_code": 200, "body": {"resources": []}}
+        self._fake()
 
         result = self.module.close_host_detections(
             device_id=HOST_AID, resolution="false_positive", comment=None
@@ -1720,16 +1808,12 @@ class TestCloseHostDetections(TestModules):
 
         self.assertEqual(result["found"], 0)
         self.assertEqual(result["closed"], 0)
-        self.assertEqual(self.mock_client.command.call_count, 1)
+        self.assertEqual(self.patches, [])
+        self.assertEqual(self.mock_client.command.call_count, 2)
 
     def test_pages_through_large_hosts(self):
         first = [f"a{i}" for i in range(1000)]
-        self.mock_client.command.side_effect = [
-            {"status_code": 200, "body": {"resources": first}},
-            {"status_code": 200, "body": {"resources": ["b1"]}},
-            {"status_code": 200, "body": {"resources": []}},
-            {"status_code": 200, "body": {"resources": []}},
-        ]
+        self._fake(host_pages=[first, ["b1"]])
 
         result = self.module.close_host_detections(
             device_id=HOST_AID, resolution="ignored", comment=None
@@ -1738,12 +1822,13 @@ class TestCloseHostDetections(TestModules):
         self.assertEqual(self.mock_client.command.call_args_list[1][1]["parameters"]["offset"], 1000)
         self.assertEqual(result["found"], 1001)
         self.assertEqual(result["closed"], 1001)
+        self.assertEqual([len(p["composite_ids"]) for p in self.patches], [1000, 1])
 
     def test_reports_remaining_ids_when_close_fails(self):
-        self.mock_client.command.side_effect = [
-            {"status_code": 200, "body": {"resources": ["d1"]}},
-            {"status_code": 403, "body": {"errors": [{"code": 403, "message": "denied"}]}},
-        ]
+        self._fake(
+            host_pages=[["d1"]],
+            patch={"status_code": 403, "body": {"errors": [{"code": 403, "message": "denied"}]}},
+        )
 
         result = self.module.close_host_detections(
             device_id=HOST_AID, resolution="true_positive", comment=None
@@ -1753,6 +1838,21 @@ class TestCloseHostDetections(TestModules):
         self.assertEqual(result["phase"], "close")
         self.assertEqual(result["failed_and_remaining_ids"], ["d1"])
         self.assertEqual(result["closed"], 0)
+
+    def test_search_error_closes_nothing(self):
+        def command(operation, **kwargs):
+            if operation == "GetQueriesAlertsV2" and kwargs["parameters"]["filter"].startswith("("):
+                return {"status_code": 500, "body": {"errors": [{"code": 500, "message": "boom"}]}}
+            if operation == "GetQueriesAlertsV2":
+                return {"status_code": 200, "body": {"resources": ["d1"]}}
+            raise AssertionError(operation)
+
+        self.mock_client.command.side_effect = command
+        result = self.module.close_host_detections(
+            device_id=HOST_AID, resolution="true_positive", comment=None
+        )
+        self.assertIn("error", result)
+        self.assertEqual(result["phase"], "search")
 
     def test_rejects_bad_input_without_api_calls(self):
         for device_id, resolution, comment in [

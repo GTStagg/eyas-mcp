@@ -34,6 +34,12 @@ RESOLUTION_TAGS = ("true_positive", "false_positive", "ignored")
 # as truncated, and running the tool again closes the rest.
 HOST_DETECTIONS_PAGE_SIZE = 1000
 MAX_HOST_DETECTIONS = 10000
+# Alerts that name the host somewhere other than device.device_id. NGSIEM
+# correlation alerts carry no device block; they name hosts in agent_id,
+# enriched_entities.aids and users[].aid instead (validated against the live API).
+RELATED_HOST_FIELDS = ("agent_id", "enriched_entities.aids", "users.aid")
+ALERT_ENTITY_BATCH = 100
+MAX_SKIPPED_IDS_SHOWN = 100
 
 
 class DetectionsModule(BaseModule):
@@ -607,6 +613,34 @@ class DetectionsModule(BaseModule):
 
         return result
 
+    def _open_alert_ids(
+        self, fql: str, cap: int
+    ) -> tuple[list[str] | dict[str, Any], bool]:
+        """Page GetQueriesAlertsV2 for `fql`; return (ids or error, truncated)."""
+        ids: list[str] = []
+        seen: set[str] = set()
+        while True:
+            page = self._base_search_api_call(
+                operation="GetQueriesAlertsV2",
+                search_params={
+                    "filter": fql,
+                    "limit": HOST_DETECTIONS_PAGE_SIZE,
+                    "offset": len(ids),
+                    "include_hidden": True,
+                },
+                error_message="Failed to search the host's open detections",
+                default_result=[],
+            )
+            if isinstance(page, dict):
+                return page, False
+            new_ids = [i for i in page if isinstance(i, str) and i not in seen]
+            seen.update(new_ids)
+            ids.extend(new_ids)
+            if len(page) < HOST_DETECTIONS_PAGE_SIZE or not new_ids:
+                return ids, False
+            if len(ids) >= cap:
+                return ids, True
+
     def close_host_detections(
         self,
         device_id: str = Field(
@@ -622,11 +656,22 @@ class DetectionsModule(BaseModule):
             default=None,
             description="Comment appended to every closed detection, for the audit trail.",
         ),
+        include_multi_host: bool = Field(
+            default=False,
+            description=(
+                "Also close open alerts that name this host alongside other hosts, such "
+                "as NGSIEM correlation detections spanning several machines. Default "
+                "false: they are listed in skipped_multi_host instead."
+            ),
+        ),
     ) -> dict[str, Any]:
         """Close every open detection on one host, with one resolution and comment.
 
         Finds all detections on the host whose status is new, in_progress or reopened,
-        then closes them and tags them with the resolution. Use this once a host has been
+        then closes them and tags them with the resolution. That includes endpoint
+        detections and alerts that name the host in other fields, such as Next-Gen SIEM
+        correlation detections; an alert that also names another host is left open and
+        listed unless include_multi_host is true. Use this once a host has been
         investigated and cleaned up, or confirmed as a false positive, to clear its queue
         in one step. Review the host's detections with falcon_search_detections first;
         this closes all of them, whatever their severity. Running it again only touches
@@ -650,31 +695,48 @@ class DetectionsModule(BaseModule):
 
         aid = device_id.lower()
         statuses = ",".join(f"'{status}'" for status in OPEN_STATUSES)
-        fql = f"device.device_id:'{aid}'+status:[{statuses}]"
+        host_fql = f"device.device_id:'{aid}'+status:[{statuses}]"
+        related = ",".join(f"{field}:'{aid}'" for field in RELATED_HOST_FIELDS)
+        related_fql = f"({related})+status:[{statuses}]"
 
-        ids: list[str] = []
-        truncated = False
-        while True:
-            page = self._base_search_api_call(
-                operation="GetQueriesAlertsV2",
-                search_params={
-                    "filter": fql,
-                    "limit": HOST_DETECTIONS_PAGE_SIZE,
-                    "offset": len(ids),
-                    "include_hidden": True,
-                },
-                error_message="Failed to search the host's open detections",
-                default_result=[],
+        host_ids, truncated = self._open_alert_ids(host_fql, MAX_HOST_DETECTIONS)
+        if isinstance(host_ids, dict):
+            return {**host_ids, "phase": "search"}
+        related_ids: list[str] = []
+        if not truncated:
+            found_related, truncated = self._open_alert_ids(
+                related_fql, MAX_HOST_DETECTIONS - len(host_ids)
             )
-            if isinstance(page, dict):
-                return {**page, "phase": "search"}
-            new_ids = [i for i in page if isinstance(i, str) and i not in ids]
-            ids.extend(new_ids)
-            if len(page) < HOST_DETECTIONS_PAGE_SIZE or not new_ids:
-                break
-            if len(ids) >= MAX_HOST_DETECTIONS:
-                truncated = True
-                break
+            if isinstance(found_related, dict):
+                return {**found_related, "phase": "search"}
+            seen = set(host_ids)
+            related_ids = [i for i in found_related if i not in seen]
+
+        # Alerts matched only through the related fields may span several hosts
+        # (a correlation rule over many machines). Close only those that name this
+        # host alone, unless the caller asks for the rest too.
+        single_host: list[str] = []
+        multi_host: list[str] = []
+        for start in range(0, len(related_ids), ALERT_ENTITY_BATCH):
+            batch = related_ids[start : start + ALERT_ENTITY_BATCH]
+            records = self._base_get_by_ids(
+                operation="PostEntitiesAlertsV2",
+                ids=batch,
+                id_key="composite_ids",
+                parameters={"include_hidden": True},
+            )
+            if isinstance(records, dict):
+                return {**records, "phase": "search"}
+            by_id = {r.get("composite_id"): r for r in records if isinstance(r, dict)}
+            for composite_id in batch:
+                record = by_id.get(composite_id)
+                if record is not None and _names_only_host(record, aid):
+                    single_host.append(composite_id)
+                else:
+                    multi_host.append(composite_id)
+
+        closing_multi = include_multi_host is True
+        ids = host_ids + single_host + (multi_host if closing_multi else [])
 
         summary: dict[str, Any] = {
             "device_id": aid,
@@ -682,7 +744,23 @@ class DetectionsModule(BaseModule):
             "found": len(ids),
             "closed": 0,
             "composite_ids": [],
+            "matched_by": {
+                "device_id": len(host_ids),
+                "related_fields_this_host_only": len(single_host),
+                "related_fields_multi_host": len(multi_host),
+            },
         }
+        if multi_host and not closing_multi:
+            summary["skipped_multi_host"] = {
+                "count": len(multi_host),
+                "composite_ids": multi_host[:MAX_SKIPPED_IDS_SHOWN],
+                "reason": (
+                    "These open alerts name this host and other hosts too, such as "
+                    "correlation detections across several machines, so they were left "
+                    "open. Review them with falcon_get_detection_details, then close them "
+                    "by ID, or run again with include_multi_host=true."
+                ),
+            }
         if truncated:
             summary["warning"] = (
                 f"The host has more than {MAX_HOST_DETECTIONS} open detections. Only the "
@@ -716,3 +794,22 @@ class DetectionsModule(BaseModule):
             summary["closed"] += len(batch)
             summary["composite_ids"].extend(batch)
         return summary
+
+
+def _names_only_host(record: dict[str, Any], aid: str) -> bool:
+    """Whether an alert names `aid` and no other host AID."""
+    if record.get("has_truncated_entities"):
+        return False
+    found: set[str] = set()
+    device = record.get("device")
+    if isinstance(device, dict):
+        found.add(str(device.get("device_id") or ""))
+    found.add(str(record.get("agent_id") or ""))
+    enriched = record.get("enriched_entities")
+    if isinstance(enriched, dict):
+        found.update(str(a) for a in enriched.get("aids") or [])
+    for user in record.get("users") or []:
+        if isinstance(user, dict):
+            found.add(str(user.get("aid") or ""))
+    hosts = {a.lower() for a in found if DEVICE_ID_PATTERN.fullmatch(a)}
+    return hosts == {aid}
