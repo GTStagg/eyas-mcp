@@ -1,9 +1,9 @@
 <!-- meta:title Module Development -->
-<!-- meta:description Step-by-step guide for implementing new Falcon MCP modules. -->
+<!-- meta:description Step-by-step guide for implementing new eyas-mcp modules. -->
 <!-- meta:section development -->
 <!-- meta:link-base /eyas-mcp/ -->
 
-This guide provides instructions for implementing new modules for the Falcon MCP server.
+This guide provides instructions for implementing new modules for eyas-mcp.
 
 ## Module Structure
 
@@ -448,12 +448,12 @@ def search_entities(self, filter: Optional[str] = None) -> List[Dict[str, Any]]:
 
 ### Configuration (`falcon_mcp/common/config.py`)
 
-- `FalconConfig`: Configuration class for the Falcon MCP server
+- `FalconConfig`: Configuration class for eyas-mcp
 - `load_config`: Load configuration from environment variables and arguments
 
 ### Logging (`falcon_mcp/common/logging.py`)
 
-- `configure_logging`: Configure logging for the Falcon MCP server
+- `configure_logging`: Configure logging for eyas-mcp
 - `get_logger`: Get a logger with the specified name
 
 ### Error Handling (`falcon_mcp/common/errors.py`)

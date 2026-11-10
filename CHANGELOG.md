@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+* name eyas-mcp throughout the docs, refresh the README module table, and update `CLAUDE.md` for the public repository and release rules
+
 ## 0.21.0 (2026-11-10)
 
 The first eyas-mcp release. eyas-mcp was imported from falcon-mcp v0.20.2 and

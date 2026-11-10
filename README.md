@@ -34,28 +34,28 @@ See the [`docs/`](docs/overview.md) folder for configuration, usage and module r
 | [Correlation Rules](docs/modules/correlationrules.md) | Search, create, update, and manage NG-SIEM correlation rules |
 | [Custom IOA](docs/modules/custom-ioa.md) | Create and manage Custom IOA behavioral detection rules and rule groups |
 | [Data Security](docs/modules/data-security.md) | Search, create, and update Data Security classifications, policies, content patterns, applications, web locations, sensitivity labels, and file types |
-| [Detections](docs/modules/detections.md) | Find, aggregate, and analyze detections to understand malicious activity |
-| [Discover](docs/modules/discover.md) | Search application inventory, managed/unmanaged assets (including drive encryption and system-insights posture), and local and Active Directory accounts |
+| [Detections](docs/modules/detections.md) | Find, aggregate, analyze, and update detections, and close every open detection on a host, including Next-Gen SIEM correlation alerts |
+| [Discover](docs/modules/discover.md) | Search or list the full application inventory, search assets of every entity type (managed, unmanaged and unsupported) with per-type totals, including drive encryption and system-insights posture, and search local and Active Directory accounts |
 | [Exclusions](docs/modules/exclusions.md) | Search, create, update, and delete IOA, machine learning, sensor visibility, and certificate-based exclusions |
 | [Firewall Management](docs/modules/firewall.md) | Search and manage firewall rules and rule groups |
 | [Fusion SOAR](docs/modules/fusion.md) | Search Fusion SOAR workflow definitions and executions, list workflow triggers, read execution results, and run on-demand workflows |
-| [Guardian](docs/modules/guardian.md) | Monitor AI agent activity, sessions, tool usage, and inventory |
-| [Host Groups](docs/modules/host-groups.md) | Search, create, update, and delete host groups; manage group membership; list the groups a single host belongs to |
+| [Guardian](docs/modules/guardian.md) | Monitor AI agent activity, sessions, tool and skill usage, and inventory; fetch records by ID; and rank tool and skill calls across the fleet |
+| [Host Groups](docs/modules/host-groups.md) | Search, create, update, and delete host groups; manage group membership; list the groups a single host belongs to, optionally verified against each group |
 | [Hosts](docs/modules/hosts.md) | Search and query hosts/devices, manage grouping tags, and contain or lift containment |
 | [Hunting](docs/modules/hunting.md) | Search and read CrowdStrike's published hunting guides and hunting queries, with optional SPL translations |
 | [Identity Protection](docs/modules/idp.md) | Entity investigation, highest-risk identities, user-to-endpoint login history, host-to-identity correlation, Identity Protection sensors, and policy rules |
 | [Intel](docs/modules/intel.md) | Research threat actors, IOCs, and intelligence reports, and read full report and actor content |
 | [IOC](docs/modules/ioc.md) | Search, create, and remove custom indicators of compromise |
 | [MalQuery](docs/modules/malquery.md) | Search CrowdStrike's malware corpus by hash or byte pattern and check quota usage |
-| [NGSIEM](docs/modules/ngsiem.md) | Execute CQL queries against Next-Gen SIEM, rebuild a host's process tree, look up CQL functions, and inspect data connections, parsers, and lookup files |
-| [Policies](docs/modules/policies.md) | Search, create, update, and delete prevention, sensor update, firewall, device control, response, and content update policies; manage host-group assignment, enable/disable, and precedence |
+| [NGSIEM](docs/modules/ngsiem.md) | Execute CQL queries against Next-Gen SIEM with an optional CQL pre-flight check and time and row limits, rebuild a host's process tree, look up CQL functions, and inspect data connections, parsers, and lookup files |
+| [Policies](docs/modules/policies.md) | Search, create, update, and delete prevention, sensor update, firewall, device control, response, and content update policies; manage host-group assignment, enable/disable, and precedence; report a host's prevention posture |
 | [Quarantine](docs/modules/quarantine.md) | Search quarantine records, preview action counts, and release, unrelease, or delete quarantined files |
-| [Real Time Response](docs/modules/rtr.md) | Audit, summarize, and run read-only RTR triage on one or many hosts, plus CrowdStrike-published Falcon scripts |
+| [Real Time Response](docs/modules/rtr.md) | Audit and summarize RTR sessions, run read-only triage on one or many hosts, wait until hosts are ready (optionally proven by a test script), run CrowdStrike-published Falcon scripts, and manage and run a custom RTR script library |
 | [Recon](docs/modules/recon.md) | Search and aggregate Falcon Intelligence Recon notifications (recon alerts), monitoring rules, and exposed-data records for dark web, leaked credentials, and typosquatting, and preview prospective rule noise |
 | [Scheduled Reports](docs/modules/scheduled-reports.md) | Manage scheduled reports and download report files |
 | [Sensor Usage](docs/modules/sensor-usage.md) | Access and analyze sensor usage data |
 | [Serverless](docs/modules/serverless.md) | Search for vulnerabilities in serverless functions |
-| [Shield](docs/modules/shield.md) | SaaS security posture, checks, alerts, and app inventory |
+| [Shield](docs/modules/shield.md) | SaaS security posture, checks, alerts, app inventory, and AI agents built in connected SaaS platforms |
 | [Spotlight](docs/modules/spotlight.md) | Manage and analyze vulnerability data and security assessments |
 | [Threat Graph](docs/modules/threatgraph.md) | Look up Threat Graph vertices, find which devices ran a file hash, and pivot along graph edges |
 | [Zero Trust Assessment](docs/modules/zero-trust-assessment.md) | Retrieve Zero Trust Assessment posture scores and sensor and OS hardening signals for hosts |

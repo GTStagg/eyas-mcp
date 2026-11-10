@@ -1,16 +1,16 @@
 <!-- meta:title Quick Start -->
-<!-- meta:description Get up and running with the Falcon MCP Server in 5 minutes. -->
+<!-- meta:description Get up and running with eyas-mcp in 5 minutes. -->
 <!-- meta:section getting-started -->
 <!-- meta:link-base /eyas-mcp/ -->
 
-This guide gets you from zero to a working Falcon MCP Server connection in 5 minutes.
+This guide gets you from zero to a working eyas-mcp connection in 5 minutes.
 
 ## Step 1: Get API Credentials
 
 1. Log into your CrowdStrike console
 2. Navigate to **Support > API Clients and Keys**
 3. Click **Add new API client** and configure:
-   - Give it a name (e.g., "Falcon MCP Server")
+   - Give it a name (e.g., "eyas-mcp")
    - Enable at minimum: `Hosts:read`, `Alerts:read`
 4. Save your **Client ID**, **Client Secret**, and **Base URL**
 

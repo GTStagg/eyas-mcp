@@ -1,9 +1,9 @@
 <!-- meta:title Transport Methods -->
-<!-- meta:description The three transport methods supported by the Falcon MCP Server. -->
+<!-- meta:description The three transport methods supported by eyas-mcp. -->
 <!-- meta:section usage -->
 <!-- meta:link-base /eyas-mcp/ -->
 
-The Falcon MCP Server supports three transport methods. Choose based on your deployment scenario.
+eyas-mcp supports three transport methods. Choose based on your deployment scenario.
 
 > [!CAUTION]
 > The HTTP transports (`sse` and `streamable-http`) have no authentication by default. Binding to a

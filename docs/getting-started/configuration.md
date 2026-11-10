@@ -1,5 +1,5 @@
 <!-- meta:title Configuration -->
-<!-- meta:description Configure environment variables and settings for the Falcon MCP Server. -->
+<!-- meta:description Configure environment variables and settings for eyas-mcp. -->
 <!-- meta:section getting-started -->
 <!-- meta:link-base /eyas-mcp/ -->
 

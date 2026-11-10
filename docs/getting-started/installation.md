@@ -1,5 +1,5 @@
 <!-- meta:title Installation -->
-<!-- meta:description Install the Falcon MCP Server using uv or pip. -->
+<!-- meta:description Install eyas-mcp using uv or pip. -->
 <!-- meta:section getting-started -->
 <!-- meta:link-base /eyas-mcp/ -->
 

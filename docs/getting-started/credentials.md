@@ -1,9 +1,9 @@
 <!-- meta:title API Credentials -->
-<!-- meta:description Create and configure CrowdStrike API credentials for the Falcon MCP Server. -->
+<!-- meta:description Create and configure CrowdStrike API credentials for eyas-mcp. -->
 <!-- meta:section getting-started -->
 <!-- meta:link-base /eyas-mcp/ -->
 
-Before using the Falcon MCP Server, you need to create API credentials in your CrowdStrike console.
+Before using eyas-mcp, you need to create API credentials in your CrowdStrike console.
 
 ## Creating API Credentials
 
@@ -11,7 +11,7 @@ Before using the Falcon MCP Server, you need to create API credentials in your C
 2. **Navigate to Support > API Clients and Keys**
 3. **Click "Add new API client"**
 4. **Configure your API client**:
-   - **Client Name**: Choose a descriptive name (e.g., "Falcon MCP Server")
+   - **Client Name**: Choose a descriptive name (e.g., "eyas-mcp")
    - **Description**: Optional description for your records
    - **API Scopes**: Select the scopes based on which modules you plan to use
 

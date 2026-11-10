@@ -1,5 +1,5 @@
 <!-- meta:title CLI Commands -->
-<!-- meta:description Command-line options for running the Falcon MCP Server. -->
+<!-- meta:description Command-line options for running eyas-mcp. -->
 <!-- meta:section usage -->
 <!-- meta:link-base /eyas-mcp/ -->
 

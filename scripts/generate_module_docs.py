@@ -1593,14 +1593,14 @@ def generate_overview_page(modules: dict[str, dict[str, Any]]) -> str:
     lines = []
     lines.append("<!-- meta:title Module Overview -->")
     lines.append(
-        "<!-- meta:description Overview of all available Falcon MCP modules with API scopes. -->"
+        "<!-- meta:description Overview of all available eyas-mcp modules with API scopes. -->"
     )
     lines.append("<!-- meta:section modules -->")
     lines.append("<!-- meta:link-base /eyas-mcp/ -->")
     lines.append("<!-- frontmatter:sidebar order:0 -->")
     lines.append("")
     lines.append(
-        "The Falcon MCP Server provides the following modules. Each module requires specific CrowdStrike API scopes."
+        "eyas-mcp provides the following modules. Each module requires specific CrowdStrike API scopes."
     )
     lines.append("")
     lines.append("| Module | API Scopes | Description |")
