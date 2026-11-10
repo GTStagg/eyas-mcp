@@ -147,7 +147,7 @@ class FalconMCPServer:
 
         # Configure logging
         configure_logging(debug=self.debug)
-        logger.info("Initializing Falcon MCP Server")
+        logger.info("Initializing eyas-mcp server")
 
         # Initialize the Falcon client
         self.falcon_client = FalconClient(
@@ -168,7 +168,7 @@ class FalconMCPServer:
 
         # Initialize the MCP server
         self.server = FastMCP(
-            name="Falcon MCP Server",
+            name="eyas-mcp",
             instructions=self._instructions(),
             debug=self.debug,
             log_level="DEBUG" if self.debug else "INFO",
@@ -204,7 +204,7 @@ class FalconMCPServer:
         module_word = "module" if module_count == 1 else "modules"
 
         logger.info(
-            "Falcon MCP v%s — %d %s, %d %s, %d %s%s",
+            "eyas-mcp v%s — %d %s, %d %s, %d %s%s",
             get_version(),
             module_count,
             module_word,
@@ -549,7 +549,7 @@ def parse_tools_list(tools_string: str) -> list[str]:
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Falcon MCP Server")
+    parser = argparse.ArgumentParser(description="eyas-mcp: an MCP server for the CrowdStrike Falcon platform")
 
     # Version
     parser.add_argument(
