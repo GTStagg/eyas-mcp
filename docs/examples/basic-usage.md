@@ -1,9 +1,9 @@
 <!-- meta:title Basic Usage -->
-<!-- meta:description Python code examples for using the Falcon MCP Server programmatically. -->
+<!-- meta:description Python code examples for using eyas-mcp programmatically. -->
 <!-- meta:section examples -->
 <!-- meta:link-base /eyas-mcp/ -->
 
-These examples show how to run the Falcon MCP Server programmatically using the Python API.
+These examples show how to run eyas-mcp programmatically using the Python API.
 
 ## stdio Transport (Default)
 
@@ -11,7 +11,7 @@ The simplest way to run the server. MCP clients manage the process via stdin/std
 
 ```python
 #!/usr/bin/env python3
-"""Basic usage example for Falcon MCP Server."""
+"""Basic usage example for eyas-mcp."""
 
 import os
 from dotenv import load_dotenv
@@ -49,7 +49,7 @@ For web-based clients that connect via HTTP.
 
 ```python
 #!/usr/bin/env python3
-"""SSE transport example for Falcon MCP Server."""
+"""SSE transport example for eyas-mcp."""
 
 import os
 from dotenv import load_dotenv
@@ -83,7 +83,7 @@ The recommended transport for server deployments.
 
 ```python
 #!/usr/bin/env python3
-"""Streamable HTTP transport example for Falcon MCP Server."""
+"""Streamable HTTP transport example for eyas-mcp."""
 
 import os
 from dotenv import load_dotenv

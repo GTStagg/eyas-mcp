@@ -29,7 +29,7 @@ Defines the page title used in the MDX frontmatter `title:` field.
 Defines the page description used in the MDX frontmatter `description:` field.
 
 ```markdown
-<!-- meta:description Install the Falcon MCP Server using uv or pip. -->
+<!-- meta:description Install eyas-mcp using uv or pip. -->
 ```
 
 ### `<!-- meta:section {directory} -->`

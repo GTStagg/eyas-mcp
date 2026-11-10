@@ -1,13 +1,13 @@
 <!-- meta:title Resource Development -->
-<!-- meta:description How to implement and register MCP resources in the Falcon MCP Server. -->
+<!-- meta:description How to implement and register MCP resources in eyas-mcp. -->
 <!-- meta:section development -->
 <!-- meta:link-base /eyas-mcp/ -->
 
-This guide provides instructions for implementing and registering resources for the Falcon MCP server.
+This guide provides instructions for implementing and registering resources for eyas-mcp.
 
 ## What are Resources?
 
-Resources in the Falcon MCP server represent data sources that can be accessed by the model. Unlike tools, which perform actions, resources provide context or information that the model can reference. Resources are particularly useful for:
+Resources in eyas-mcp represent data sources that can be accessed by the model. Unlike tools, which perform actions, resources provide context or information that the model can reference. Resources are particularly useful for:
 
 1. Providing documentation or guides that the model can reference
 2. Exposing structured data that tools can use
@@ -277,7 +277,7 @@ See the main [Contributing Guide](../../.github/CONTRIBUTING.md) for complete co
 
 ## Conclusion
 
-Resources are a powerful way to provide context and documentation to the model. By following the guidelines in this document, you can create effective resources that complement your tools and enhance the overall functionality of the Falcon MCP server.
+Resources are a powerful way to provide context and documentation to the model. By following the guidelines in this document, you can create effective resources that complement your tools and enhance the overall functionality of eyas-mcp.
 
 When developing resources:
 

@@ -3,7 +3,7 @@
 <!-- meta:section usage -->
 <!-- meta:link-base /eyas-mcp/ -->
 
-The Falcon MCP server registers one tool schema per tool across all enabled modules. As the module
+eyas-mcp registers one tool schema per tool across all enabled modules. As the module
 set grows, this balloons the context window that AI clients must hold in every conversation — even
 for tools that will never be called in that session.
 

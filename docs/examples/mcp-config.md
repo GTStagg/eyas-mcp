@@ -1,5 +1,5 @@
 <!-- meta:title MCP Config -->
-<!-- meta:description MCP configuration file examples for connecting to the Falcon MCP Server. -->
+<!-- meta:description MCP configuration file examples for connecting to eyas-mcp. -->
 <!-- meta:section examples -->
 <!-- meta:link-base /eyas-mcp/ -->
 

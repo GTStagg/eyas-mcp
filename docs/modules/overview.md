@@ -1,10 +1,10 @@
 <!-- meta:title Module Overview -->
-<!-- meta:description Overview of all available Falcon MCP modules with API scopes. -->
+<!-- meta:description Overview of all available eyas-mcp modules with API scopes. -->
 <!-- meta:section modules -->
 <!-- meta:link-base /eyas-mcp/ -->
 <!-- frontmatter:sidebar order:0 -->
 
-The Falcon MCP Server provides the following modules. Each module requires specific CrowdStrike API scopes.
+eyas-mcp provides the following modules. Each module requires specific CrowdStrike API scopes.
 
 | Module | API Scopes | Description |
 |--------|-------------------|-------------|

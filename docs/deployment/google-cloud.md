@@ -1,12 +1,12 @@
 <!-- meta:title Google Cloud -->
-<!-- meta:description Deploy the Falcon MCP Server on Google Cloud Run or Vertex AI Agent Engine. -->
+<!-- meta:description Deploy eyas-mcp on Google Cloud Run or Vertex AI Agent Engine. -->
 <!-- meta:section deployment -->
 <!-- meta:link-base /eyas-mcp/ -->
 
 > [!NOTE]
 > This guide uses the prebuilt Google ADK agent in [`examples/adk`](https://github.com/GTStagg/eyas-mcp/tree/main/examples/adk), which installs eyas-mcp from this GitHub repository. The example was inherited at the time of the import and hasn't been re-run end to end since.
 
-This guide covers running the Falcon MCP Server with the prebuilt Google ADK agent locally, on Cloud Run, or on Vertex AI Agent Engine.
+This guide covers running eyas-mcp with the prebuilt Google ADK agent locally, on Cloud Run, or on Vertex AI Agent Engine.
 
 ## Prerequisites
 
@@ -90,7 +90,7 @@ The [example's README](https://github.com/GTStagg/eyas-mcp/tree/main/examples/ad
 
 ## FQL Guide Resources
 
-The agent is configured with `use_mcp_resources=True`, enabling ADK's MCP resource support. The Falcon MCP Server exposes FQL guide resources (e.g., `falcon://detections/search/fql-guide`) that the agent fetches on demand via the auto-discovered `load_mcp_resource` tool, providing accurate Falcon query construction without embedding all FQL documentation in the system prompt.
+The agent is configured with `use_mcp_resources=True`, enabling ADK's MCP resource support. eyas-mcp exposes FQL guide resources (e.g., `falcon://detections/search/fql-guide`) that the agent fetches on demand via the auto-discovered `load_mcp_resource` tool, providing accurate Falcon query construction without embedding all FQL documentation in the system prompt.
 
 ## Performance Optimization
 

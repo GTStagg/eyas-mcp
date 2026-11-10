@@ -1,5 +1,5 @@
 <!-- meta:title Documentation Guide -->
-<!-- meta:description Architecture and maintenance guide for the Falcon MCP documentation. -->
+<!-- meta:description Architecture and maintenance guide for the eyas-mcp documentation. -->
 <!-- meta:section development -->
 <!-- meta:link-base /eyas-mcp/ -->
 
@@ -8,7 +8,7 @@
 
 ## Overview
 
-This repository is the single source of truth for Falcon MCP documentation. The `docs/` directory contains standard GitHub-flavored Markdown with HTML comment annotations that an external documentation site uses to build the published pages. The annotations are invisible when rendered on GitHub.
+This repository is the single source of truth for eyas-mcp documentation. The `docs/` directory contains standard GitHub-flavored Markdown with HTML comment annotations that an external documentation site uses to build the published pages. The annotations are invisible when rendered on GitHub.
 
 For the full annotation reference, see [Content Tag Guide](content-tag-guide.md).
 

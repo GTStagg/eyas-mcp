@@ -3,7 +3,7 @@
 <!-- meta:section development -->
 <!-- meta:link-base /eyas-mcp/ -->
 
-This document provides guidance on running and understanding the integration tests for the Falcon MCP Server.
+This document provides guidance on running and understanding the integration tests for eyas-mcp.
 
 ## Overview
 
