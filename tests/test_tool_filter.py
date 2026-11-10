@@ -494,7 +494,7 @@ class TestServerToolFiltering(unittest.TestCase):
         mock_client.return_value.authenticate.return_value = True
         with self.assertLogs("falcon_mcp.server", level="INFO") as captured:
             FalconMCPServer(enabled_modules={"detections"}, allowed_tools={_FOREIGN_TOOL})
-        summary = next(m for m in captured.output if "Falcon MCP v" in m)
+        summary = next(m for m in captured.output if "eyas-mcp v" in m)
         self.assertIn("1 module,", summary)
 
     def _policy_log(self, **kwargs) -> str:

@@ -49,7 +49,7 @@ class TestFalconMCPServer(unittest.TestCase):
 
         # Verify server initialization
         mock_fastmcp.assert_called_once_with(
-            name="Falcon MCP Server",
+            name="eyas-mcp",
             instructions=BASE_INSTRUCTIONS,
             debug=True,
             log_level="DEBUG",
@@ -254,7 +254,7 @@ class TestFalconMCPServer(unittest.TestCase):
 
         # Verify FastMCP was initialized with stateless_http
         mock_fastmcp.assert_called_once_with(
-            name="Falcon MCP Server",
+            name="eyas-mcp",
             instructions=BASE_INSTRUCTIONS,
             debug=False,
             log_level="INFO",
@@ -283,7 +283,7 @@ class TestFalconMCPServer(unittest.TestCase):
 
         # Verify FastMCP was initialized with stateless_http=False
         mock_fastmcp.assert_called_once_with(
-            name="Falcon MCP Server",
+            name="eyas-mcp",
             instructions=BASE_INSTRUCTIONS,
             debug=False,
             log_level="INFO",
@@ -365,7 +365,7 @@ class TestFalconMCPServer(unittest.TestCase):
 
         # Verify FastMCP receives the non-localhost host
         mock_fastmcp.assert_called_once_with(
-            name="Falcon MCP Server",
+            name="eyas-mcp",
             instructions=BASE_INSTRUCTIONS,
             debug=False,
             log_level="INFO",
@@ -541,7 +541,7 @@ class TestFalconMCPServer(unittest.TestCase):
         with self.assertLogs("falcon_mcp.server", level="INFO") as cm:
             FalconMCPServer(enabled_modules=set())
 
-        version_logs = [msg for msg in cm.output if "Falcon MCP v0.9.0" in msg]
+        version_logs = [msg for msg in cm.output if "eyas-mcp v0.9.0" in msg]
         self.assertEqual(len(version_logs), 1, "Expected exactly one startup log with version")
 
 
