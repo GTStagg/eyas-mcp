@@ -158,6 +158,27 @@ Returns user objects including email, display name, and granted permissions.
 
 - "Show me which users have authorized Shield app abc123"
 
+### `falcon_search_shield_ai_agents`
+
+**Required scopes:** `SaaS Security:read`
+
+List AI agents built in connected SaaS platforms, such as copilots and custom agents.
+
+Use this to audit which AI agents exist across your SaaS estate, who owns them,
+what access they have, and which tools and knowledge sources they use. These are
+agents defined inside SaaS apps, which Falcon Shield (SaaS Security) monitors;
+AI agents running on endpoints are covered by the Guardian tools instead. Pass a
+result's item ID to `get_shield_ai_agent` for full details.
+
+### `falcon_get_shield_ai_agent`
+
+**Required scopes:** `SaaS Security:read`
+
+Get full details for one AI agent built in a connected SaaS platform.
+
+Returns the agent's configuration, owner, access, tools and knowledge sources.
+Find agents and their item IDs with `search_shield_ai_agents`.
+
 ### `falcon_search_shield_data_shares`
 
 **Required scopes:** `SaaS Security:read`

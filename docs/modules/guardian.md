@@ -474,6 +474,37 @@ search_guardian_executions.
 
 - "List the AI models observed across the fleet"
 
+### `falcon_get_guardian_entities`
+
+**Required scopes:** `AIDR:read`
+
+Fetch Guardian records by ID.
+
+Use this when you already hold IDs, for example from a saved report or an
+earlier search, and need the current record. To find records, use the search
+tools instead; they return full records too.
+
+### `falcon_get_guardian_os_user`
+
+**Required scopes:** `AIDR:read`
+
+Fetch one OS user that ran AI agents on a host.
+
+OS users are keyed by host and username together. Use search_guardian_os_users
+to find them.
+
+### `falcon_count_guardian_usage`
+
+**Required scopes:** `AIDR:read`
+
+Count AI agent tool or skill calls by name, across every session.
+
+Use this for "which tools or skills do agents call most" across the fleet, a
+host or one session. It counts calls, from the event data, over at most 7 days.
+For the tools and skills agents have available rather than call, use
+search_guardian_tools and search_guardian_skills; for one session's individual
+calls, use search_guardian_tool_usage and search_guardian_skill_usage.
+
 ## Resources
 
 - **`falcon://guardian/events/query-guide`**: Guardian API reference for the AI entity and LogScale event query endpoints. Use this when choosing endpoints and parameters for the Guardian tools.

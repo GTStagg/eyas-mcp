@@ -3,9 +3,10 @@ Guardian module for Falcon MCP Server.
 
 Provides tools for querying AI agent inventory and activity data.
 
-FalconPy models no AIDR service class, so every call here uses the
-`override="METHOD,/route"` raw-request escape hatch (precedent: cloud.py,
-agentworks.py). Note the deliberate naming split: the MCP tools and this module are
+Every call here uses the `override="METHOD,/route"` raw-request escape hatch
+(precedent: cloud.py, agentworks.py). FalconPy 1.6.6 added an AIDR service class
+(aliased `Guardian`), but older FalconPy versions this project supports lack it, and
+the override path works with all of them. Note the deliberate naming split: the MCP tools and this module are
 named "Guardian", but the platform names the underlying API surface "AIDR" — hence
 the `/aidr/*` routes, the `aidr_events_query` operation label, and the `AIDR:read`
 scope. That is intentional, not a leftover rename.
@@ -17,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import partial
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 from mcp.server import FastMCP
@@ -73,6 +74,21 @@ _AGENT_SESSIONS_AGGREGATES_ROUTE = "/aidr/aggregates/agent-sessions/v1"
 _TOOLS_AGGREGATES_ROUTE = "/aidr/aggregates/tools/v1"
 _SKILLS_AGGREGATES_ROUTE = "/aidr/aggregates/skills/v1"
 _DETECTIONS_AGGREGATES_ROUTE = "/aidr/aggregates/detections/v1"
+_TOOL_USAGE_AGGREGATES_ROUTE = "/aidr/aggregates/tool-usage/v1"
+_SKILL_USAGE_AGGREGATES_ROUTE = "/aidr/aggregates/skill-usage/v1"
+
+# By-ID lookups. Each takes repeatable `ids`, from the matching query route.
+_ENTITY_ROUTES = {
+    "agent_sessions": "/aidr/entities/agent-sessions/v1",
+    "tools": "/aidr/entities/tools/v1",
+    "skills": "/aidr/entities/skills/v1",
+    "model_names": "/aidr/entities/model-names/v1",
+    "agent_installations": "/aidr/entities/agent-installations/v1",
+}
+_AGENT_OS_USERS_ENTITIES_ROUTE = "/aidr/entities/agent-os-users/v1"
+_MAX_ENTITY_IDS = 100
+_MAX_ENTITY_ID_LENGTH = 512
+_AID_PATTERN = re.compile(r"[0-9a-fA-F]{32}")
 
 # A 64-hex string is the AIAgent.Id / AgentIds[] token. The detection routes'
 # agent_id param wants the 32-hex SensorId instead; the API silently returns zero
@@ -182,6 +198,18 @@ def _bad_time_range_unit(value: str | None) -> str | None:
     m = re.match(r"^(\d+)([a-zA-Z]+)$", value.strip())
     if m and m.group(2) not in _TIME_UNIT_DAYS:
         return m.group(2)
+    return None
+
+
+def _validate_entity_ids(ids: Any) -> str | None:
+    """Return why a by-ID lookup's IDs are unusable, or None when they're fine."""
+    if not isinstance(ids, list) or not ids:
+        return "ids must be a non-empty list of record IDs."
+    if len(ids) > _MAX_ENTITY_IDS:
+        return f"Pass at most {_MAX_ENTITY_IDS} IDs per call."
+    for value in ids:
+        if not isinstance(value, str) or not value.strip() or len(value) > _MAX_ENTITY_ID_LENGTH:
+            return "Each ID must be a non-empty string from a Guardian search result."
     return None
 
 
@@ -676,6 +704,13 @@ class GuardianModule(BaseModule):
             server=server, method=self.search_guardian_installs, name="search_guardian_installs"
         )
         self._add_tool(server=server, method=self.search_guardian_models, name="search_guardian_models")
+        self._add_tool(
+            server=server, method=self.get_guardian_entities, name="get_guardian_entities"
+        )
+        self._add_tool(server=server, method=self.get_guardian_os_user, name="get_guardian_os_user")
+        self._add_tool(
+            server=server, method=self.count_guardian_usage, name="count_guardian_usage"
+        )
 
     def register_resources(self, server: FastMCP) -> None:
         """Register Guardian resources with the MCP server."""
@@ -2366,6 +2401,177 @@ class GuardianModule(BaseModule):
         if response.notices:
             return {"results": resources, "notices": response.notices}
         return resources
+
+    def get_guardian_entities(
+        self,
+        entity_type: Literal[
+            "agent_sessions", "tools", "skills", "model_names", "agent_installations"
+        ] = Field(
+            description=(
+                "Kind of record to fetch: agent_sessions, tools, skills, model_names or "
+                "agent_installations."
+            ),
+        ),
+        ids: list[str] = Field(
+            description=(
+                "Record IDs: the `Id` values returned by the matching search tool, for "
+                "example get_guardian_agent_sessions for agent_sessions or "
+                f"search_guardian_tools for tools. Max: {_MAX_ENTITY_IDS}."
+            ),
+        ),
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Fetch Guardian records by ID.
+
+        Use this when you already hold IDs, for example from a saved report or an
+        earlier search, and need the current record. To find records, use the search
+        tools instead; they return full records too.
+        """
+        entity_type = unwrap_field_default(entity_type)
+        ids = unwrap_field_default(ids)
+        route = _ENTITY_ROUTES.get(entity_type) if isinstance(entity_type, str) else None
+        if route is None:
+            return {
+                "error": (
+                    f"Unknown entity_type {entity_type!r}. Use one of: "
+                    f"{', '.join(_ENTITY_ROUTES)}."
+                )
+            }
+        refusal = _validate_entity_ids(ids)
+        if refusal:
+            return {"error": refusal}
+        unique_ids = list(dict.fromkeys(ids))
+        response = self._query(route, {"ids": unique_ids})
+        if not response.ok:
+            return self._with_notices({"error": response.errors}, response)
+        found = {str(record.get("Id")) for record in response.resources if isinstance(record, dict)}
+        return self._with_notices(
+            {
+                "results": response.resources,
+                "requested": len(unique_ids),
+                "found": len(response.resources),
+                "missing_ids": [i for i in unique_ids if i not in found],
+            },
+            response,
+        )
+
+    def get_guardian_os_user(
+        self,
+        aid: str = Field(
+            description="Host sensor ID (AID, 32 hex characters) the OS user ran agents on.",
+        ),
+        username: str = Field(
+            description="OS username, as returned by search_guardian_os_users.",
+        ),
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Fetch one OS user that ran AI agents on a host.
+
+        OS users are keyed by host and username together. Use search_guardian_os_users
+        to find them.
+        """
+        aid = unwrap_field_default(aid)
+        username = unwrap_field_default(username)
+        if not isinstance(aid, str) or not _AID_PATTERN.fullmatch(aid):
+            return {"error": "aid must be a 32-character host sensor ID."}
+        if not isinstance(username, str) or not username.strip() or len(username) > 256:
+            return {"error": "username must be a non-empty OS username of 256 characters or less."}
+        response = self._query(
+            _AGENT_OS_USERS_ENTITIES_ROUTE, {"aid": aid.lower(), "username": username}
+        )
+        return self._format_response(response)
+
+    def count_guardian_usage(
+        self,
+        kind: Literal["tools", "skills"] = Field(
+            description="What to count: tool calls or skill calls, grouped by name.",
+        ),
+        time_range: str = Field(
+            default="24h",
+            description=(
+                "Lookback window, for example '2h' or '24h'. The API allows at most 7d; "
+                "if it refuses, Guardian retries narrower and says so in 'notices'. "
+                "Default: '24h'"
+            ),
+        ),
+        session_id: str | None = Field(
+            default=None,
+            description="Count only calls in this agent session (AgenticSessionId).",
+        ),
+        aid: str | None = Field(
+            default=None,
+            description="Count only calls on this host (sensor ID, 32 hex characters).",
+        ),
+        limit: int = Field(
+            default=50,
+            ge=1,
+            le=500,
+            description="Maximum number of names to return. [1-500]",
+        ),
+        offset: int = Field(
+            default=0,
+            ge=0,
+            le=1000,
+            description="Index of the first name to return, for paging. [0-1000]",
+        ),
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Count AI agent tool or skill calls by name, across every session.
+
+        Use this for "which tools or skills do agents call most" across the fleet, a
+        host or one session. It counts calls, from the event data, over at most 7 days.
+        For the tools and skills agents have available rather than call, use
+        search_guardian_tools and search_guardian_skills; for one session's individual
+        calls, use search_guardian_tool_usage and search_guardian_skill_usage.
+        """
+        kind = unwrap_field_default(kind)
+        time_range = unwrap_field_default(time_range)
+        session_id = unwrap_field_default(session_id)
+        aid = unwrap_field_default(aid)
+        limit = unwrap_field_default(limit)
+        offset = unwrap_field_default(offset)
+
+        route = {
+            "tools": _TOOL_USAGE_AGGREGATES_ROUTE,
+            "skills": _SKILL_USAGE_AGGREGATES_ROUTE,
+        }.get(kind) if isinstance(kind, str) else None
+        if route is None:
+            return {"error": "kind must be 'tools' or 'skills'."}
+        if aid is not None and (not isinstance(aid, str) or not _AID_PATTERN.fullmatch(aid)):
+            return {"error": "aid must be a 32-character host sensor ID."}
+
+        # The API ignores limit and offset here: it returns every name, sorted by name,
+        # up to its group cap. Ask for the cap, then rank by count and page locally so
+        # a short page keeps the most-called names.
+        response = self._query(route, {
+            "time_range": time_range,
+            "session_id": session_id,
+            "aid": aid.lower() if isinstance(aid, str) else None,
+            "limit": _AGGREGATE_GROUP_LIMIT,
+        })
+        if not response.ok:
+            return self._with_notices({"error": response.errors}, response)
+
+        rows = [r for r in response.resources if isinstance(r, dict)]
+        ranked = sorted(rows, key=lambda r: -_as_int(r.get("count", r.get("_count", 0))))
+        page = ranked[offset : offset + limit]
+        next_offset = offset + len(page)
+        result: dict[str, Any] = {
+            "results": page,
+            "pagination": {
+                "total": len(ranked),
+                "offset": offset,
+                "limit": limit,
+                "next_offset": next_offset if next_offset < len(ranked) else None,
+            },
+            "sorted_by": "count, highest first",
+        }
+        if len(rows) >= _AGGREGATE_GROUP_LIMIT:
+            result["truncated"] = True
+            result["pagination"]["total"] = None
+            response.notices.append(
+                f"The API returned its cap of {_AGGREGATE_GROUP_LIMIT} names, so some are "
+                "missing and the ranking may be incomplete. Narrow time_range, or filter by "
+                "aid or session_id."
+            )
+        return self._with_notices(result, response)
 
     def _format_response(
         self, response: GuardianResponse, limit: int | None = None
