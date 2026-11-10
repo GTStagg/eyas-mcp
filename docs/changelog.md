@@ -1,7 +1,32 @@
 <!-- meta:title Changelog -->
-<!-- meta:description Release history for the Falcon MCP Server. -->
+<!-- meta:description Release history for eyas-mcp. -->
 
 # Changelog
+
+## 0.21.0 (2026-11-10)
+
+The first eyas-mcp release. eyas-mcp was imported from falcon-mcp v0.20.2 and
+has been developed independently since; see [NOTICE.md](https://github.com/GTStagg/eyas-mcp/blob/main/NOTICE.md).
+
+### Features
+
+* **modules:** new MalQuery, ThreatGraph and Hunting modules, plus host containment, Falcon-published and multi-host RTR scripts, process trees, host-identity correlation, user login history and a CQL syntax lookup
+* **rtr:** custom RTR script library and runscript tools ([#4](https://github.com/GTStagg/eyas-mcp/pull/4))
+* RTR session wait, host detection close and prevention posture tools ([#5](https://github.com/GTStagg/eyas-mcp/pull/5))
+* **discover:** list applications without a filter ([#6](https://github.com/GTStagg/eyas-mcp/pull/6))
+* asset search across entity types, bounded NGSIEM search with a CQL check, and verified host group membership ([#7](https://github.com/GTStagg/eyas-mcp/pull/7))
+* **rtr:** runscript readiness probe for `falcon_wait_for_rtr_sessions` ([#8](https://github.com/GTStagg/eyas-mcp/pull/8))
+* Guardian lookups and usage counts, and SaaS AI agent tools ([#9](https://github.com/GTStagg/eyas-mcp/pull/9))
+
+### Bug Fixes
+
+* public release audit findings, including opt-in `--require-api-key` and a dependency audit workflow ([#1](https://github.com/GTStagg/eyas-mcp/pull/1))
+* **detections:** `falcon_close_host_detections` closes NGSIEM correlation alerts ([#10](https://github.com/GTStagg/eyas-mcp/pull/10))
+* **server:** identify as eyas-mcp in logs, `serverInfo` and CLI help ([#11](https://github.com/GTStagg/eyas-mcp/pull/11))
+
+## falcon-mcp releases
+
+The entries below are falcon-mcp's, from before the import, kept for reference.
 
 ## [0.20.2](https://github.com/CrowdStrike/falcon-mcp/compare/v0.20.1...v0.20.2) (2026-11-03)
 
