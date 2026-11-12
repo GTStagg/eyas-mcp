@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Features
+
+* **custom ioa:** `falcon_update_ioa_rule` takes an optional `rule_updates` list to update up to 100 rules in one rule group in a single call, for example to enable a new group's rules
+* **exclusions:** `falcon_create_exclusion` defaults an IOA `cl_regex` to `.*` when it is not given
+* **exclusions:** `falcon_create_exclusion` takes `skip_if_duplicate` to return an existing IOA exclusion (same `pattern_id`, `ifn_regex` and `cl_regex`) or ML exclusion (same `value`) instead of creating another
+
+### Bug Fixes
+
+* **custom ioa:** write tools replace control characters in `comment` with spaces, which Falcon otherwise rejects with HTTP 400
+* **exclusions:** IOA regexes are checked for the `\B` zero-width assertion too, and ML `excluded_from` values other than `blocking` and `extraction` are rejected before any API call
+* **data security:** `falcon_create_data_security_entity` replaces en and em dashes in `name` and `description` with hyphens, rejects the `global` region before calling the API, and returns full records for entity types whose create call answers with IDs only (previously a list of ID strings)
+
 ### Documentation
 
 * name eyas-mcp throughout the docs, refresh the README module table, and update `CLAUDE.md` for the public repository and release rules

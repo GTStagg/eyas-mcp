@@ -7,7 +7,7 @@ import unittest
 from mcp.types import ToolAnnotations
 
 from falcon_mcp.modules.base import READ_ONLY_ANNOTATIONS
-from falcon_mcp.modules.custom_ioa import CustomIOAModule
+from falcon_mcp.modules.custom_ioa import MAX_RULE_UPDATES, CustomIOAModule, _clean_comment
 from tests.modules.utils.test_modules import TestModules
 
 
@@ -597,6 +597,205 @@ class TestCustomIOAModule(TestModules):
         call_args = self.mock_client.command.call_args
         rule_update = call_args[1]["body"]["rule_updates"][0]
         self.assertEqual(rule_update["field_values"], new_field_values)
+        # Unset optional arguments never leak into the body.
+        self.assertNotIn("comment", call_args[1]["body"])
+        self.assertEqual(set(rule_update), {"instance_id", "rulegroup_version", "field_values"})
+
+    # --- update_ioa_rule batch mode ---
+
+    def test_update_ioa_rule_batch_sends_one_call(self):
+        """Batch mode sends every rule update for the group in one API call."""
+        self.mock_client.command.return_value = {
+            "status_code": 200,
+            "body": {
+                "resources": [
+                    {"instance_id": "1", "enabled": True},
+                    {"instance_id": "2", "enabled": True},
+                ]
+            },
+        }
+
+        result = self.module.update_ioa_rule(
+            rulegroup_id="rg-001",
+            rulegroup_version=7,
+            rule_updates=[
+                {"instance_id": "1", "enabled": True},
+                {"instance_id": "2", "enabled": True, "pattern_severity": "high"},
+            ],
+            comment="Enable group",
+        )
+
+        self.mock_client.command.assert_called_once()
+        call_args = self.mock_client.command.call_args
+        self.assertEqual(call_args[0][0], "update_rules_v2")
+        body = call_args[1]["body"]
+        self.assertEqual(body["rulegroup_id"], "rg-001")
+        self.assertEqual(body["rulegroup_version"], 7)
+        self.assertEqual(body["comment"], "Enable group")
+        self.assertEqual(
+            body["rule_updates"],
+            [
+                {"instance_id": "1", "enabled": True, "rulegroup_version": 7},
+                {
+                    "instance_id": "2",
+                    "enabled": True,
+                    "pattern_severity": "high",
+                    "rulegroup_version": 7,
+                },
+            ],
+        )
+        self.assertEqual(len(result), 2)
+
+    def test_update_ioa_rule_batch_drops_none_values(self):
+        """None values inside an item are left out of the request."""
+        self.mock_client.command.return_value = {"status_code": 200, "body": {"resources": []}}
+        self.module.update_ioa_rule(
+            rulegroup_id="rg-001",
+            rulegroup_version=1,
+            rule_updates=[{"instance_id": "1", "enabled": False, "name": None}],
+        )
+        rule_update = self.mock_client.command.call_args[1]["body"]["rule_updates"][0]
+        self.assertNotIn("name", rule_update)
+
+    def test_update_ioa_rule_batch_api_error(self):
+        """An API failure in batch mode is returned wrapped in a list."""
+        self.mock_client.command.return_value = {
+            "status_code": 409,
+            "body": {"errors": [{"code": 409, "message": "version conflict"}]},
+        }
+        result = self.module.update_ioa_rule(
+            rulegroup_id="rg-001",
+            rulegroup_version=1,
+            rule_updates=[{"instance_id": "1", "enabled": True}],
+        )
+        self.assertEqual(len(result), 1)
+        self.assertIn("error", result[0])
+
+    def _assert_update_rejected(self, expected_text, **kwargs):
+        result = self.module.update_ioa_rule(rulegroup_id="rg-001", rulegroup_version=1, **kwargs)
+        self.assertEqual(len(result), 1)
+        self.assertIn("error", result[0])
+        self.assertIn(expected_text, result[0]["error"])
+        self.mock_client.command.assert_not_called()
+
+    def test_update_ioa_rule_requires_exactly_one_mode(self):
+        """Neither or both of instance_id and rule_updates is an error."""
+        self._assert_update_rejected("exactly one", enabled=True)
+        self._assert_update_rejected(
+            "exactly one",
+            instance_id="1",
+            rule_updates=[{"instance_id": "2", "enabled": True}],
+        )
+
+    def test_update_ioa_rule_batch_rejects_single_mode_fields(self):
+        """Top-level rule fields cannot be combined with rule_updates."""
+        self._assert_update_rejected(
+            "enabled, name",
+            rule_updates=[{"instance_id": "1", "enabled": True}],
+            enabled=True,
+            name="x",
+        )
+
+    def test_update_ioa_rule_batch_validation(self):
+        """Each rule_updates item is checked before any API call."""
+        cases = [
+            ([], "non-empty list"),
+            ("not-a-list", "non-empty list"),
+            (["x"], "rule_updates[0] must be an object"),
+            ([{"enabled": True}], "rule_updates[0] needs a non-empty string `instance_id`"),
+            ([{"instance_id": "", "enabled": True}], "needs a non-empty string"),
+            ([{"instance_id": 5, "enabled": True}], "needs a non-empty string"),
+            ([{"instance_id": "1"}], "at least one field"),
+            ([{"instance_id": "1", "enabled": None}], "at least one field"),
+            ([{"instance_id": "1", "ruletype_id": "x"}], "unsupported keys: ruletype_id"),
+            (
+                [{"instance_id": "1", "enabled": True}, {"instance_id": "1", "enabled": False}],
+                "rule_updates[1] repeats instance_id '1'",
+            ),
+            ([{"instance_id": "1", "enabled": "yes"}], "rule_updates[0].enabled must be of type bool"),
+            ([{"instance_id": "1", "name": 3}], "name must be of type str"),
+            ([{"instance_id": "1", "disposition_id": "10"}], "disposition_id must be of type int"),
+            ([{"instance_id": "1", "disposition_id": True}], "disposition_id must be of type int"),
+            ([{"instance_id": "1", "field_values": {}}], "field_values must be of type list"),
+            ([{"instance_id": "1", "field_values": ["x"]}], "field_values must be a list of objects"),
+            ([{"instance_id": "1", "pattern_severity": "severe"}], "pattern_severity 'severe'"),
+        ]
+        for rule_updates, expected in cases:
+            with self.subTest(rule_updates=rule_updates):
+                self.mock_client.command.reset_mock()
+                self._assert_update_rejected(expected, rule_updates=rule_updates)
+
+    def test_update_ioa_rule_batch_cap(self):
+        """More than MAX_RULE_UPDATES items is rejected; exactly the cap is allowed."""
+        too_many = [{"instance_id": str(i), "enabled": True} for i in range(MAX_RULE_UPDATES + 1)]
+        self._assert_update_rejected("the limit is", rule_updates=too_many)
+
+        self.mock_client.command.return_value = {"status_code": 200, "body": {"resources": []}}
+        self.module.update_ioa_rule(
+            rulegroup_id="rg-001",
+            rulegroup_version=1,
+            rule_updates=too_many[:MAX_RULE_UPDATES],
+        )
+        body = self.mock_client.command.call_args[1]["body"]
+        self.assertEqual(len(body["rule_updates"]), MAX_RULE_UPDATES)
+
+    # --- comment cleaning ---
+
+    def test_clean_comment(self):
+        """Control characters become spaces and whitespace runs collapse."""
+        self.assertEqual(_clean_comment("line one\nline two"), "line one line two")
+        self.assertEqual(_clean_comment("a\r\n\tb  c\x00d\x7fe"), "a b c d e")
+        self.assertEqual(_clean_comment("  padded  "), "padded")
+        self.assertIsNone(_clean_comment(None))
+
+    def test_write_tools_clean_comment(self):
+        """Every Custom IOA write tool cleans its comment before sending it."""
+        self.mock_client.command.return_value = {"status_code": 200, "body": {"resources": [{}]}}
+        raw = "Ticket 1\n\tapproved"
+        calls = [
+            (
+                lambda: self.module.create_ioa_rule_group(
+                    name="g", platform="windows", description=None, comment=raw
+                ),
+                "body",
+            ),
+            (
+                lambda: self.module.update_ioa_rule_group(
+                    id="rg-1", rulegroup_version=1, enabled=True, comment=raw
+                ),
+                "body",
+            ),
+            (lambda: self.module.delete_ioa_rule_groups(ids=["rg-1"], comment=raw), "parameters"),
+            (
+                lambda: self.module.create_ioa_rule(
+                    rulegroup_id="rg-1",
+                    name="r",
+                    ruletype_id="1",
+                    disposition_id=10,
+                    pattern_severity="low",
+                    field_values=[],
+                    description=None,
+                    comment=raw,
+                ),
+                "body",
+            ),
+            (
+                lambda: self.module.update_ioa_rule(
+                    rulegroup_id="rg-1", rulegroup_version=1, instance_id="1", comment=raw
+                ),
+                "body",
+            ),
+            (
+                lambda: self.module.delete_ioa_rules(rule_group_id="rg-1", ids=["1"], comment=raw),
+                "parameters",
+            ),
+        ]
+        for call, location in calls:
+            with self.subTest(location=location):
+                self.mock_client.command.reset_mock()
+                call()
+                sent = self.mock_client.command.call_args[1][location]
+                self.assertEqual(sent["comment"], "Ticket 1 approved")
 
     # --- delete_ioa_rules ---
 

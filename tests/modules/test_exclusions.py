@@ -5,7 +5,7 @@ Tests for the Exclusions module.
 from mcp.types import ToolAnnotations
 
 from falcon_mcp.modules.base import READ_ONLY_ANNOTATIONS
-from falcon_mcp.modules.exclusions import ExclusionsModule
+from falcon_mcp.modules.exclusions import ExclusionsModule, _find_zero_width_assertion
 from tests.modules.utils.test_modules import TestModules
 
 DESTRUCTIVE_ANNOTATIONS = ToolAnnotations(
@@ -519,7 +519,7 @@ class TestExclusionsModule(TestModules):
 
     def test_create_ioa_rejects_zero_width_assertions(self):
         """IOA create rejects each zero-width regex assertion pre-flight, naming it."""
-        for token in ["^", "$", r"\b", r"\A", r"\Z"]:
+        for token in ["^", "$", r"\b", r"\B", r"\A", r"\Z"]:
             with self.subTest(token=token):
                 self.mock_client.command.reset_mock()
                 result = self.module.create_exclusion(
@@ -605,6 +605,244 @@ class TestExclusionsModule(TestModules):
         )
         self.assertEqual(self.mock_client.command.call_count, 1)
         self.assertEqual(result[0]["id"], "ioa-1")
+
+    def test_find_zero_width_assertion_non_word_boundary(self):
+        """\\B is flagged, but an escaped backslash followed by B is a literal."""
+        self.assertEqual(_find_zero_width_assertion(r"foo\Bbar"), r"\B")
+        self.assertIsNone(_find_zero_width_assertion(r"C:\\Bin\\app\.exe"))
+        self.assertIsNone(_find_zero_width_assertion(r"[\B]"))
+
+    def test_create_ioa_escaped_backslash_before_b_passes(self):
+        """`\\\\B` (literal backslash then B) is not a zero-width assertion."""
+        self.mock_client.command.return_value = self._create_response({"id": "ioa-1"})
+        result = self.module.create_exclusion(
+            exclusion_type="ioa",
+            **self._create_kwargs(
+                name="n", pattern_id="1", ifn_regex=r".*\\Bin\\app\.exe", cl_regex="/x"
+            ),
+        )
+        self.assertEqual(self.mock_client.command.call_count, 1)
+        self.assertEqual(result[0]["id"], "ioa-1")
+
+    def test_create_ioa_cl_regex_defaults_to_match_all(self):
+        """An unset or empty cl_regex defaults to '.*' on create."""
+        for cl_regex in (None, ""):
+            with self.subTest(cl_regex=cl_regex):
+                self.mock_client.command.reset_mock()
+                self.mock_client.command.return_value = self._create_response({"id": "ioa-1"})
+                result = self.module.create_exclusion(
+                    exclusion_type="ioa",
+                    **self._create_kwargs(
+                        name="n", pattern_id="1", ifn_regex=r".*\\app\.exe", cl_regex=cl_regex
+                    ),
+                )
+                excl = self.mock_client.command.call_args[1]["body"]["exclusions"][0]
+                self.assertEqual(excl["cl_regex"], ".*")
+                self.assertEqual(result[0]["id"], "ioa-1")
+
+    def test_create_ioa_cl_regex_omitted_entirely(self):
+        """Calling without the cl_regex argument at all also defaults it to '.*'."""
+        self.mock_client.command.return_value = self._create_response({"id": "ioa-1"})
+        kwargs = self._create_kwargs(name="n", pattern_id="1", ifn_regex=r".*\\app\.exe")
+        del kwargs["cl_regex"]
+        self.module.create_exclusion(exclusion_type="ioa", **kwargs)
+        excl = self.mock_client.command.call_args[1]["body"]["exclusions"][0]
+        self.assertEqual(excl["cl_regex"], ".*")
+
+    def test_create_ioa_match_all_ifn_with_default_cl_rejected(self):
+        """ifn_regex '.*' with the defaulted cl_regex is still rejected."""
+        result = self.module.create_exclusion(
+            exclusion_type="ioa",
+            **self._create_kwargs(name="n", pattern_id="1", ifn_regex=".*", cl_regex=None),
+        )
+        self.assertIn("error", result[0])
+        self.assertEqual(self.mock_client.command.call_count, 0)
+
+    def test_update_ioa_still_requires_cl_regex(self):
+        """The cl_regex default applies to create only."""
+        result = self.module.update_exclusion(
+            exclusion_type="ioa",
+            id="ioa-1",
+            **self._create_kwargs(name="n", pattern_id="1", ifn_regex="/x", cl_regex=None),
+        )
+        self.assertIn("error", result[0])
+        self.assertIn("cl_regex", result[0]["error"])
+        self.assertEqual(self.mock_client.command.call_count, 0)
+
+    def test_create_ml_rejects_invalid_excluded_from(self):
+        """excluded_from must be a subset of {'blocking', 'extraction'}."""
+        for excluded_from in (["blocking", "scanning"], ["Blocking"], [""]):
+            with self.subTest(excluded_from=excluded_from):
+                result = self.module.create_exclusion(
+                    exclusion_type="ml",
+                    **self._create_kwargs(value="/tmp/a", excluded_from=excluded_from),
+                )
+                self.assertIn("error", result[0])
+                self.assertIn("blocking, extraction", result[0]["error"])
+                self.assertEqual(self.mock_client.command.call_count, 0)
+
+    def test_create_ml_accepts_valid_excluded_from(self):
+        """Both allowed excluded_from values reach the API."""
+        self.mock_client.command.return_value = self._create_response({"id": "ml-1"})
+        self.module.create_exclusion(
+            exclusion_type="ml",
+            **self._create_kwargs(value="/tmp/a", excluded_from=["blocking", "extraction"]),
+        )
+        excl = self.mock_client.command.call_args[1]["body"]["exclusions"][0]
+        self.assertEqual(excl["excluded_from"], ["blocking", "extraction"])
+
+    # ---- Duplicate guard ---------------------------------------------------------
+
+    def _ok(self, resources, total=None):
+        body = {"resources": resources}
+        if total is not None:
+            body["meta"] = {"pagination": {"total": total, "offset": 0, "limit": 500}}
+        return {"status_code": 200, "body": body}
+
+    def test_create_ioa_skip_if_duplicate_returns_existing(self):
+        """An IOA exclusion with the same pattern and regexes is returned, not created."""
+        existing = {
+            "id": "ioa-old",
+            "pattern_id": "569",
+            "ifn_regex": "/tmp/x",
+            "cl_regex": ".*",
+        }
+        other = {**existing, "id": "ioa-other", "ifn_regex": "/tmp/y"}
+        self.mock_client.command.side_effect = [
+            self._ok(["ioa-other", "ioa-old"], total=2),
+            self._ok([other, existing]),
+        ]
+        result = self.module.create_exclusion(
+            exclusion_type="ioa",
+            skip_if_duplicate=True,
+            **self._create_kwargs(name="n", pattern_id="569", ifn_regex="/tmp/x"),
+        )
+        self.assertEqual(result[0]["id"], "ioa-old")
+        self.assertTrue(result[0]["skipped_duplicate"])
+        self.assertIn("note", result[0])
+        ops = [c[0][0] for c in self.mock_client.command.call_args_list]
+        self.assertEqual(ops, ["ss_ioa_exclusions_search_v2", "ss_ioa_exclusions_get_v2"])
+        params = self.mock_client.command.call_args_list[0][1]["parameters"]
+        self.assertEqual(params["filter"], "pattern_id:'569'")
+
+    def test_create_ioa_skip_if_duplicate_creates_when_regex_differs(self):
+        """Same pattern but different cl_regex is not a duplicate."""
+        existing = {"id": "ioa-old", "pattern_id": "569", "ifn_regex": "/tmp/x", "cl_regex": ".*"}
+        self.mock_client.command.side_effect = [
+            self._ok(["ioa-old"], total=1),
+            self._ok([existing]),
+            self._create_response({"id": "ioa-new"}),
+        ]
+        result = self.module.create_exclusion(
+            exclusion_type="ioa",
+            skip_if_duplicate=True,
+            **self._create_kwargs(
+                name="n", pattern_id="569", ifn_regex="/tmp/x", cl_regex="--run"
+            ),
+        )
+        self.assertEqual(result[0]["id"], "ioa-new")
+        self.assertEqual(
+            self.mock_client.command.call_args_list[-1][0][0], "ss_ioa_exclusions_create_v2"
+        )
+
+    def test_create_skip_if_duplicate_no_matches_creates(self):
+        """No search hits means the exclusion is created."""
+        self.mock_client.command.side_effect = [
+            self._ok([], total=0),
+            self._create_response({"id": "ml-new"}),
+        ]
+        result = self.module.create_exclusion(
+            exclusion_type="ml",
+            skip_if_duplicate=True,
+            **self._create_kwargs(value="C:\\Tools\\it's.exe"),
+        )
+        self.assertEqual(result[0]["id"], "ml-new")
+        params = self.mock_client.command.call_args_list[0][1]["parameters"]
+        self.assertEqual(params["filter"], "value:'C:\\\\Tools\\\\it\\'s.exe'")
+        self.assertEqual(self.mock_client.command.call_args_list[0][0][0], "exclusions_search_v2")
+
+    def test_create_ml_skip_if_duplicate_returns_existing(self):
+        """An ML exclusion with the same value is returned, not created."""
+        self.mock_client.command.side_effect = [
+            self._ok(["ml-old"], total=1),
+            self._ok([{"id": "ml-old", "value": "/tmp/a"}]),
+        ]
+        result = self.module.create_exclusion(
+            exclusion_type="ml",
+            skip_if_duplicate=True,
+            **self._create_kwargs(value="/tmp/a"),
+        )
+        self.assertEqual(result[0]["id"], "ml-old")
+        self.assertTrue(result[0]["skipped_duplicate"])
+        self.assertEqual(self.mock_client.command.call_count, 2)
+
+    def test_create_skip_if_duplicate_pages_through_results(self):
+        """The duplicate scan follows offsets until the total is reached."""
+        first_ids = [f"ml-{i}" for i in range(500)]
+        self.mock_client.command.side_effect = [
+            self._ok(first_ids, total=501),
+            self._ok([{"id": i, "value": "/other"} for i in first_ids]),
+            self._ok(["ml-last"], total=501),
+            self._ok([{"id": "ml-last", "value": "/tmp/a"}]),
+        ]
+        result = self.module.create_exclusion(
+            exclusion_type="ml",
+            skip_if_duplicate=True,
+            **self._create_kwargs(value="/tmp/a"),
+        )
+        self.assertEqual(result[0]["id"], "ml-last")
+        second_search = self.mock_client.command.call_args_list[2][1]["parameters"]
+        self.assertEqual(second_search["offset"], 500)
+
+    def test_create_skip_if_duplicate_search_error_blocks_create(self):
+        """A failed duplicate search returns the error instead of creating."""
+        self.mock_client.command.side_effect = [
+            {"status_code": 403, "body": {"errors": [{"code": 403, "message": "denied"}]}},
+        ]
+        result = self.module.create_exclusion(
+            exclusion_type="ml",
+            skip_if_duplicate=True,
+            **self._create_kwargs(value="/tmp/a"),
+        )
+        self.assertIn("error", result[0])
+        self.assertEqual(self.mock_client.command.call_count, 1)
+
+    def test_create_skip_if_duplicate_get_error_blocks_create(self):
+        """A failed detail fetch during the duplicate scan returns the error."""
+        self.mock_client.command.side_effect = [
+            self._ok(["ml-old"], total=1),
+            {"status_code": 500, "body": {"errors": [{"code": 500, "message": "boom"}]}},
+        ]
+        result = self.module.create_exclusion(
+            exclusion_type="ml",
+            skip_if_duplicate=True,
+            **self._create_kwargs(value="/tmp/a"),
+        )
+        self.assertIn("error", result[0])
+        self.assertEqual(self.mock_client.command.call_count, 2)
+
+    def test_create_skip_if_duplicate_ignored_for_other_types(self):
+        """skip_if_duplicate does not search for sensor_visibility or certificate."""
+        self.mock_client.command.return_value = self._create_response({"id": "sv-1"})
+        self.module.create_exclusion(
+            exclusion_type="sensor_visibility",
+            skip_if_duplicate=True,
+            **self._create_kwargs(value="/tmp/a", host_groups=["grp-1"]),
+        )
+        self.assertEqual(self.mock_client.command.call_count, 1)
+        self.assertEqual(
+            self.mock_client.command.call_args[0][0], "createSVExclusionsV1"
+        )
+
+    def test_create_skip_if_duplicate_validates_before_searching(self):
+        """Body validation errors are returned before any duplicate search."""
+        result = self.module.create_exclusion(
+            exclusion_type="ml",
+            skip_if_duplicate=True,
+            **self._create_kwargs(value=None),
+        )
+        self.assertIn("error", result[0])
+        self.assertEqual(self.mock_client.command.call_count, 0)
 
     def test_create_ml_value_with_caret_unaffected(self):
         """Non-IOA types are not subject to the IOA regex assertion check."""

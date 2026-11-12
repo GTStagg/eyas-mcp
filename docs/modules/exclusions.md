@@ -41,15 +41,16 @@ Responses include `pagination.total` (the total number of records matching the f
 > [!CAUTION]
 > This tool performs destructive operations.
 
-**Required scopes:** `IOA Exclusions:write`, `Machine Learning Exclusions:write`, `Sensor Visibility Exclusions:write`
+**Required scopes:** `IOA Exclusions:read`, `Machine Learning Exclusions:read`, `Sensor Visibility Exclusions:read`, `IOA Exclusions:write`, `Machine Learning Exclusions:write`, `Sensor Visibility Exclusions:write`
 
 Create an exclusion of the given type.
 
 The `exclusion_type` selects which fields are required: 'ioa' needs name,
-pattern_id, ifn_regex, and cl_regex; 'ml' and 'sensor_visibility' need
-value (sensor_visibility also needs host_groups); 'certificate' needs
-name, certificate, and status. Invalid or missing fields return a guiding
-error before any API call. Returns the created exclusion record(s).
+pattern_id, and ifn_regex (cl_regex defaults to '.*'); 'ml' and
+'sensor_visibility' need value (sensor_visibility also needs host_groups);
+'certificate' needs name, certificate, and status. Invalid or missing
+fields return a guiding error before any API call. Returns the created
+exclusion record(s).
 
 **Example prompts:**
 

@@ -22,6 +22,7 @@ from pydantic import AnyUrl, Field
 
 from falcon_mcp.common.errors import _format_error_response
 from falcon_mcp.common.logging import get_logger
+from falcon_mcp.common.utils import unwrap_field_default
 from falcon_mcp.modules.base import BaseModule
 from falcon_mcp.resources.exclusions import SEARCH_EXCLUSIONS_FQL_DOCUMENTATION
 
@@ -30,11 +31,31 @@ logger = get_logger(__name__)
 # Valid exclusion types (the discriminator values exposed to the agent).
 EXCLUSION_TYPES = ("ioa", "ml", "sensor_visibility", "certificate")
 
-# Zero-width regex assertions the IOA exclusion API rejects. 
+# Escaped letters that form zero-width assertions (\b \B \A \Z). Together with
+# the bare anchors ^ and $, the IOA exclusion API rejects all of them.
+_ZERO_WIDTH_ESCAPES = ("b", "B", "A", "Z")
+
+# ML exclusion targets the API accepts in `excluded_from`.
+ML_EXCLUDED_FROM_VALUES = ("blocking", "extraction")
+
+# Default IOA command line regex when the caller leaves `cl_regex` unset on create.
+DEFAULT_IOA_CL_REGEX = ".*"
+
+# Page size used when scanning existing exclusions for a duplicate.
+_DUPLICATE_SCAN_LIMIT = 500
+
+
+def _fql_quote(value: str) -> str:
+    """Quote ``value`` as an FQL string literal, escaping backslashes and quotes."""
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
 def _find_zero_width_assertion(regex: str) -> str | None:
     """Return the first zero-width assertion token in ``regex``, else None.
 
-    Ignores escaped anchors (``\\^``, ``\\$``) and anything inside a character
+    The tokens are ``^``, ``$``, ``\\b``, ``\\B``, ``\\A`` and ``\\Z``.
+    Ignores escaped anchors (``\\^``, ``\\$``), an escaped backslash followed by
+    a letter (``\\\\B`` is a literal backslash and ``B``), and anything inside a character
     class ``[...]``, which the regex engine treats as literals rather than
     position assertions. A ``]`` in the first position of a class (or right
     after a leading ``^`` negation) is itself a literal member, not the class
@@ -49,7 +70,7 @@ def _find_zero_width_assertion(regex: str) -> str | None:
         char = regex[index]
         if char == "\\" and index + 1 < length:
             nxt = regex[index + 1]
-            if not in_class and nxt in ("b", "A", "Z"):
+            if not in_class and nxt in _ZERO_WIDTH_ESCAPES:
                 return f"\\{nxt}"
             if in_class:
                 class_members += 1
@@ -377,7 +398,8 @@ class ExclusionsModule(BaseModule):
         if not name or not pattern_id or not ifn_regex or not cl_regex:
             return _format_error_response(
                 "IOA exclusions require 'name', 'pattern_id' (a real existing IOA "
-                "rule pattern), 'ifn_regex' (non-empty), and 'cl_regex' (non-empty).",
+                "rule pattern), 'ifn_regex' (non-empty), and 'cl_regex' (non-empty; "
+                "when creating, an unset 'cl_regex' defaults to '.*').",
                 operation=self._OPERATIONS["ioa"]["create"],
             )
 
@@ -388,7 +410,7 @@ class ExclusionsModule(BaseModule):
                 operation=self._OPERATIONS["ioa"]["create"],
             )
 
-        # IOA regexes must not contain zero-width assertions (^ $ \b \A \Z); the
+        # IOA regexes must not contain zero-width assertions (^ $ \b \B \A \Z); the
         # API rejects them, so fail fast with the offending field and token.
         regex_fields = {
             "ifn_regex": ifn_regex,
@@ -406,7 +428,7 @@ class ExclusionsModule(BaseModule):
                 return _format_error_response(
                     f"IOA exclusion rejected: '{field_name}' contains the "
                     f"zero-width assertion '{token}', which the IOA regex engine "
-                    "does not support. Remove ^, $, \\b, \\A, and \\Z (escape them "
+                    "does not support. Remove ^, $, \\b, \\B, \\A, and \\Z (escape them "
                     "as \\\\^ / \\\\$ or use a character class if you need a literal).",
                     operation=self._OPERATIONS["ioa"]["create"],
                 )
@@ -457,6 +479,19 @@ class ExclusionsModule(BaseModule):
                 "to exclude).",
                 operation=self._OPERATIONS["ml"]["create"],
             )
+
+        if excluded_from is not None:
+            invalid = [
+                target
+                for target in excluded_from
+                if not isinstance(target, str) or target not in ML_EXCLUDED_FROM_VALUES
+            ]
+            if invalid:
+                return _format_error_response(
+                    f"Invalid 'excluded_from' value(s): {', '.join(map(str, invalid))}. "
+                    f"Allowed values: {', '.join(ML_EXCLUDED_FROM_VALUES)}.",
+                    operation=self._OPERATIONS["ml"]["create"],
+                )
 
         exclusion: dict[str, Any] = {"value": value}
         optional = {
@@ -637,6 +672,65 @@ class ExclusionsModule(BaseModule):
             exclusion_id=exclusion_id,
         )
 
+    # ---- Duplicate check ----------------------------------------------------------
+
+    def _find_duplicate(
+        self, exclusion_type: str, exclusion: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Return an existing exclusion matching ``exclusion``, an error dict, or None.
+
+        IOA exclusions match on pattern_id, ifn_regex and cl_regex (searched by
+        pattern_id); ML exclusions match on value (searched by exact value). The
+        FQL filter narrows the search and the match itself is checked here, so
+        FQL escaping differences can only cause a miss, never a false match.
+        """
+        if exclusion_type == "ioa":
+            filter_expr = f"pattern_id:{_fql_quote(str(exclusion['pattern_id']))}"
+            match_keys: tuple[str, ...] = ("pattern_id", "ifn_regex", "cl_regex")
+        else:
+            filter_expr = f"value:{_fql_quote(str(exclusion['value']))}"
+            match_keys = ("value",)
+
+        offset = 0
+        while True:
+            ids, pagination = self._base_search_with_meta(
+                operation=self._OPERATIONS[exclusion_type]["query"],
+                search_params={
+                    "filter": filter_expr,
+                    "limit": _DUPLICATE_SCAN_LIMIT,
+                    "offset": offset,
+                },
+                error_message=f"Failed to check for an existing {exclusion_type} exclusion",
+            )
+            if isinstance(ids, dict):
+                return ids
+            if not ids:
+                return None
+
+            details = self._base_get_by_ids(
+                operation=self._OPERATIONS[exclusion_type]["get"],
+                ids=ids,
+                use_params=True,
+            )
+            if isinstance(details, dict):
+                return details
+
+            for record in details:
+                if all(str(record.get(key)) == str(exclusion[key]) for key in match_keys):
+                    return {
+                        **record,
+                        "skipped_duplicate": True,
+                        "note": (
+                            f"An existing {exclusion_type} exclusion already matches "
+                            f"{', '.join(match_keys)}; it was returned and nothing was created."
+                        ),
+                    }
+
+            offset += len(ids)
+            total = (pagination or {}).get("total")
+            if len(ids) < _DUPLICATE_SCAN_LIMIT or (total is not None and offset >= total):
+                return None
+
     # ---- Create / Update ----------------------------------------------------------
 
     def create_exclusion(
@@ -668,7 +762,10 @@ class ExclusionsModule(BaseModule):
         ),
         cl_regex: str | None = Field(
             default=None,
-            description="IOA command line regex. Required (non-empty) for 'ioa'.",
+            description=(
+                "IOA command line regex. Optional for 'ioa': defaults to '.*' when "
+                "unset or empty. 'ifn_regex' and 'cl_regex' cannot both be '.*'."
+            ),
         ),
         parent_ifn_regex: str | None = Field(
             default=None,
@@ -702,7 +799,10 @@ class ExclusionsModule(BaseModule):
         ),
         excluded_from: list[str] | None = Field(
             default=None,
-            description="ML exclusion targets, e.g. ['blocking']. Optional, 'ml' only.",
+            description=(
+                "ML exclusion targets: any of 'blocking' and 'extraction', e.g. "
+                "['blocking']. Optional, 'ml' only."
+            ),
         ),
         is_descendant_process: bool | None = Field(
             default=None,
@@ -730,18 +830,31 @@ class ExclusionsModule(BaseModule):
             default=None,
             description="Audit comment for the exclusion.",
         ),
+        skip_if_duplicate: bool = Field(
+            default=False,
+            description=(
+                "When true, look for an existing exclusion first and return it instead "
+                "of creating a new one. 'ioa' matches pattern_id, ifn_regex and cl_regex; "
+                "'ml' matches value. Ignored for other types."
+            ),
+        ),
     ) -> list[dict[str, Any]]:
         """Create an exclusion of the given type.
 
         The `exclusion_type` selects which fields are required: 'ioa' needs name,
-        pattern_id, ifn_regex, and cl_regex; 'ml' and 'sensor_visibility' need
-        value (sensor_visibility also needs host_groups); 'certificate' needs
-        name, certificate, and status. Invalid or missing fields return a guiding
-        error before any API call. Returns the created exclusion record(s).
+        pattern_id, and ifn_regex (cl_regex defaults to '.*'); 'ml' and
+        'sensor_visibility' need value (sensor_visibility also needs host_groups);
+        'certificate' needs name, certificate, and status. Invalid or missing
+        fields return a guiding error before any API call. Returns the created
+        exclusion record(s).
         """
         type_error = self._validate_exclusion_type(exclusion_type)
         if type_error is not None:
             return [type_error]
+
+        cl_regex = unwrap_field_default(cl_regex)
+        if exclusion_type == "ioa" and not cl_regex:
+            cl_regex = DEFAULT_IOA_CL_REGEX
 
         body = self._build_body(
             exclusion_type,
@@ -767,6 +880,11 @@ class ExclusionsModule(BaseModule):
 
         if self._is_error(body):
             return [body]
+
+        if unwrap_field_default(skip_if_duplicate) is True and exclusion_type in ("ioa", "ml"):
+            existing = self._find_duplicate(exclusion_type, body["exclusions"][0])
+            if existing is not None:
+                return [existing]
 
         result = self._base_query_api_call(
             operation=self._OPERATIONS[exclusion_type]["create"],

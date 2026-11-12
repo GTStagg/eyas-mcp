@@ -128,10 +128,12 @@ criteria the rule matches against (process names, file paths, command line regex
 
 **Required scopes:** `Custom IOA Rules:write`
 
-Update an existing Custom IOA behavioral detection rule.
+Update one or more Custom IOA behavioral detection rules in a rule group.
 
 Requires rulegroup_version for optimistic locking. Get the current version
-and instance_id from falcon_search_ioa_rule_groups.
+and instance IDs from falcon_search_ioa_rule_groups. New rules are created
+disabled; batch mode (`rule_updates`) can enable a whole group's rules in
+one call. Returns the updated rule records.
 
 **Example prompts:**
 

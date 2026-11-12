@@ -694,6 +694,88 @@ class TestDataSecurityModule(TestModules):
         self.assertIn("does not support update", result[0]["error"])
         self.mock_client.command.assert_not_called()
 
+    # --- Create: text normalisation, region guard, result shape ---
+
+    def test_create_replaces_en_and_em_dashes(self):
+        """En and em dashes in name and description become plain hyphens."""
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"resources": [{"id": "cls-new"}]}}
+        ]
+        caller_body = {
+            "name": "PII – strict",
+            "description": "Blocks — everything",
+            "classification_properties": {"note": "keep — here"},
+        }
+        self.module.create_data_security_entity(entity_type="classification", body=caller_body)
+        sent = self.mock_client.command.call_args.kwargs["body"]["resources"][0]
+        self.assertEqual(sent["name"], "PII - strict")
+        self.assertEqual(sent["description"], "Blocks - everything")
+        # Only name and description are touched, and the caller's dict is not mutated.
+        self.assertEqual(sent["classification_properties"], {"note": "keep — here"})
+        self.assertEqual(caller_body["name"], "PII – strict")
+
+    def test_create_rejects_global_region(self):
+        """region 'global' is rejected before any API call, in any letter case."""
+        for region in ("global", "Global", " GLOBAL "):
+            with self.subTest(region=region):
+                self.mock_client.command.reset_mock()
+                result = self.module.create_data_security_entity(
+                    entity_type="content_pattern",
+                    body={"name": "x", "category": "PII", "regexes": ["r"], "region": region},
+                )
+                self.assertIsInstance(result, list)
+                self.assertIn("error", result[0])
+                self.assertIn("ALL", result[0]["error"])
+                self.mock_client.command.assert_not_called()
+
+    def test_create_allows_all_region(self):
+        """region 'ALL' passes through unchanged."""
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"resources": [{"id": "cp-new"}]}}
+        ]
+        self.module.create_data_security_entity(
+            entity_type="content_pattern",
+            body={"name": "x", "category": "PII", "regexes": ["r"], "region": "ALL"},
+        )
+        self.assertEqual(self.mock_client.command.call_args.kwargs["body"]["region"], "ALL")
+
+    def test_create_returning_records_passes_them_through(self):
+        """A create that returns full records makes no extra call."""
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"resources": [{"id": "ca-new", "name": "Box"}]}}
+        ]
+        result = self.module.create_data_security_entity(
+            entity_type="cloud_application", body={"name": "Box"}
+        )
+        self.assertEqual(result, [{"id": "ca-new", "name": "Box"}])
+        self.assertEqual(self.mock_client.command.call_count, 1)
+
+    def test_create_returning_ids_fetches_full_records(self):
+        """A create that returns only ID strings is answered with the full records."""
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"resources": ["cp-new"]}},
+            {"status_code": 200, "body": {"resources": [{"id": "cp-new", "name": "SSN"}]}},
+        ]
+        result = self.module.create_data_security_entity(
+            entity_type="content_pattern",
+            body={"name": "SSN", "category": "PII", "regexes": ["r"], "region": "ALL"},
+        )
+        self.assertEqual(result, [{"id": "cp-new", "name": "SSN"}])
+        get_call = self.mock_client.command.call_args_list[1]
+        self.assertEqual(get_call.args[0], "entities_content_pattern_get")
+        self.assertEqual(get_call.kwargs["parameters"]["ids"], ["cp-new"])
+
+    def test_create_returning_ids_falls_back_to_id_record(self):
+        """If fetching the new record fails, the result is still a record with its id."""
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"resources": ["pol-new"]}},
+            {"status_code": 500, "body": {"errors": [{"code": 500, "message": "boom"}]}},
+        ]
+        result = self.module.create_data_security_entity(
+            entity_type="policy", platform_name="win", body={"name": "P"}
+        )
+        self.assertEqual(result, [{"id": "pol-new"}])
+
 
 if __name__ == "__main__":
     unittest.main()

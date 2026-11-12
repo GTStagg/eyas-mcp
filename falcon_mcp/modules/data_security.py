@@ -49,7 +49,8 @@ _WRITE_BODY_DOC = """JSON object with the entity's fields. Shape depends on enti
   enable_content_inspection, inspection_depth, min_confidence_level, ...}}. Requires the
   platform_name argument ('win' or 'mac').
 - content_pattern: {name, category ('PII'|'PCI DSS'|'PHI'|'Custom'|'ITAR'|'Secret'), description,
-  example, regexes:[...], min_match_threshold, region}
+  example, regexes:[...], min_match_threshold, region}. region is 'ALL' or an ISO 3166
+  alpha-3 country code such as 'USA'; the API rejects 'global'.
 - cloud_application: {name, urls:[{fqdn, path}], description}
 - enterprise_account: {name, application_group_id ('google'|'microsoft'|'box'), domains:[...],
   plugin_config_id}
@@ -64,6 +65,20 @@ _WRITE_BODY_DOC = """JSON object with the entity's fields. Shape depends on enti
 All referenced IDs must be real IDs obtained via search/get — never guess them.
 For UPDATES, include the entity "id" inside this object. See
 falcon://data-security/entities/model-guide for entity relationships."""
+
+# Extra body documentation for the create tool.
+_CREATE_BODY_DOC = _WRITE_BODY_DOC + """
+
+On create, en dashes and em dashes in "name" and "description" are replaced with a
+plain hyphen, because the Data Security character set rejects them. A "region" of
+'global' is rejected before any API call; use 'ALL'."""
+
+# Characters the Data Security name/description validator rejects, mapped to the
+# plain hyphen-minus that replaces them.
+_DASH_TRANSLATION = str.maketrans({"–": "-", "—": "-"})
+
+# Body text fields whose dashes are normalised on create.
+_DASH_NORMALISED_FIELDS = ("name", "description")
 
 
 # Ordered tuple of supported entity_type discriminator values. Also drives the
@@ -570,7 +585,7 @@ class DataSecurityModule(BaseModule):
                 "sensitivity_label. (file_type is read-only and cannot be created.)"
             ),
         ),
-        body: dict[str, Any] = Field(description=_WRITE_BODY_DOC),
+        body: dict[str, Any] = Field(description=_CREATE_BODY_DOC),
         platform_name: str | None = Field(
             default=None,
             description="Required only for entity_type='policy': 'win' or 'mac'.",
@@ -582,7 +597,8 @@ class DataSecurityModule(BaseModule):
         enterprise accounts, web locations, local applications, local application
         groups, and sensitivity labels; policies also need platform_name. Bodies
         reference other entities by ID, so look those IDs up with search first and
-        never guess them. Returns a list containing the created entity.
+        never guess them. Returns a list containing the created entity, as full
+        records like falcon_get_data_security_entities returns.
         """
         error = self._validate_entity_type(entity_type)
         if error:
@@ -599,12 +615,57 @@ class DataSecurityModule(BaseModule):
                 f"platform_name is required for entity_type='{entity_type}' ('win' or 'mac')."
             )]
 
+        region = body.get("region")
+        if isinstance(region, str) and region.strip().lower() == "global":
+            return [_format_error_response(
+                "region 'global' is rejected by the Data Security API. Use 'ALL' for "
+                "every region, or an ISO 3166 alpha-3 country code such as 'USA'.",
+                operation=create_op,
+            )]
+
+        body = {
+            key: value.translate(_DASH_TRANSLATION)
+            if key in _DASH_NORMALISED_FIELDS and isinstance(value, str)
+            else value
+            for key, value in body.items()
+        }
+
         query_params = {"platform_name": platform_name} if ops["platform"] else None
-        return self._write_entity(
+        result = self._write_entity(
             create_op,
             self._wrap_body(ops["create_wrapper"], body),
             query_params=query_params,
         )
+        if not isinstance(result, list):
+            return result
+        return self._normalise_created(ops["get"], result)
+
+    def _normalise_created(
+        self, get_op: str, created: list[Any]
+    ) -> list[dict[str, Any]]:
+        """Return created entities as full records, whatever shape the API used.
+
+        Some Data Security create operations answer with the new entity's ID
+        string rather than the entity, so those IDs are fetched with the
+        entity's get operation. Error lists and records pass through unchanged.
+        A record that cannot be fetched is returned as ``{"id": <id>}``.
+        """
+        new_ids = [item for item in created if isinstance(item, str)]
+        if not new_ids:
+            return created
+
+        fetched = self._base_get_by_ids(get_op, new_ids, use_params=True)
+        by_id: dict[str, dict[str, Any]] = {}
+        if isinstance(fetched, list):
+            by_id = {
+                record["id"]: record
+                for record in fetched
+                if isinstance(record, dict) and isinstance(record.get("id"), str)
+            }
+        return [
+            by_id.get(item, {"id": item}) if isinstance(item, str) else item
+            for item in created
+        ]
 
     def update_data_security_entity(
         self,
