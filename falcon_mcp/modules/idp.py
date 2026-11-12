@@ -208,7 +208,7 @@ class IdpModule(BaseModule):
                 "such as hostname, status, or machine_domain. "
                 "See `falcon://idp/sensors/fql-guide` for syntax."
             ),
-            examples={"hostname:'DC01*'", "status:'Protected'"},
+            examples=["hostname:'DC01*'", "status:'Protected'"],
         ),
         limit: int = Field(
             default=50,
@@ -223,7 +223,7 @@ class IdpModule(BaseModule):
         sort: str | None = Field(
             default=None,
             description="Sort field and direction, e.g. 'hostname.asc' or 'status.desc'.",
-            examples={"hostname.asc", "status.desc"},
+            examples=["hostname.asc", "status.desc"],
         ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """Search Identity Protection sensors on domain controllers and other identity hosts.
@@ -524,7 +524,7 @@ class IdpModule(BaseModule):
                 "`last_login_user` (usually the AD sAMAccountName, e.g. 'jdoe'). "
                 "Leave off any 'DOMAIN\\' prefix. Matched case-insensitively."
             ),
-            examples={"jdoe", "svc_backup"},
+            examples=["jdoe", "svc_backup"],
         ),
         hours: int = Field(
             default=168,

@@ -160,7 +160,7 @@ class DiscoverModule(BaseModule):
                 last_used_timestamp:>'1970-01-01T00:00:00Z' drops applications whose
                 timestamp is empty.
             """).strip(),
-            examples={"name:'Chrome'", "vendor:'Microsoft Corporation'"},
+            examples=["name:'Chrome'", "vendor:'Microsoft Corporation'"],
         ),
         facet: str | None = Field(
             default=None,
@@ -178,7 +178,7 @@ class DiscoverModule(BaseModule):
                 already carries the full host block, including host.hostname, and
                 last_used_timestamp.
             """).strip(),
-            examples={"browser_extension", "host_info", "install_usage"},
+            examples=["browser_extension", "host_info", "install_usage"],
         ),
         limit: int = Field(
             default=100,
@@ -189,7 +189,7 @@ class DiscoverModule(BaseModule):
         sort: str | None = Field(
             default=None,
             description="Property used to sort the results. All properties can be used to sort unless otherwise noted in their property descriptions.",
-            examples={"name.asc", "vendor.desc", "last_used_timestamp.desc"},
+            examples=["name.asc", "vendor.desc", "last_used_timestamp.desc"],
         ),
         offset: int | None = Field(
             default=None,
@@ -349,7 +349,7 @@ class DiscoverModule(BaseModule):
                 "FQL filter expression. See `falcon://discover/managed-assets/fql-guide` for "
                 "fields. Omit it, and entity_type, to list every asset of every type."
             ),
-            examples={"platform_name:'Windows'", "criticality:'Critical'"},
+            examples=["platform_name:'Windows'", "criticality:'Critical'"],
         ),
         entity_type: str | None = Field(
             default=None,
@@ -357,7 +357,7 @@ class DiscoverModule(BaseModule):
                 "Limit results to one entity type, for example 'managed', 'unmanaged' or "
                 "'unsupported'. Omit it to include every type."
             ),
-            examples={"managed", "unmanaged", "unsupported"},
+            examples=["managed", "unmanaged", "unsupported"],
         ),
         limit: int = Field(
             default=100,
@@ -381,7 +381,7 @@ class DiscoverModule(BaseModule):
         sort: str | None = Field(
             default=None,
             description="Sort field and direction, for example 'hostname.asc' or 'last_seen_timestamp.desc'.",
-            examples={"hostname.asc", "last_seen_timestamp.desc"},
+            examples=["hostname.asc", "last_seen_timestamp.desc"],
         ),
         include_type_totals: bool = Field(
             default=False,
@@ -484,7 +484,7 @@ class DiscoverModule(BaseModule):
         filter: str | None = Field(
             default=None,
             description="FQL filter expression. See `falcon://discover/hosts/fql-guide` for syntax. Note: entity_type:'unmanaged' is automatically applied.",
-            examples={"platform_name:'Windows'", "criticality:'Critical'"},
+            examples=["platform_name:'Windows'", "criticality:'Critical'"],
         ),
         limit: int = Field(
             default=100,
@@ -517,7 +517,7 @@ class DiscoverModule(BaseModule):
 
                 Examples: 'hostname.asc', 'last_seen_timestamp.desc', 'criticality.desc'
             """).strip(),
-            examples={"hostname.asc", "last_seen_timestamp.desc", "criticality.desc"},
+            examples=["hostname.asc", "last_seen_timestamp.desc", "criticality.desc"],
         ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """Search for unmanaged assets (hosts without Falcon sensor) in your environment.
@@ -558,7 +558,7 @@ class DiscoverModule(BaseModule):
         filter: str | None = Field(
             default=None,
             description="FQL filter expression. See `falcon://discover/managed-assets/fql-guide` for syntax. Note: entity_type:'managed' is automatically applied.",
-            examples={"encryption_status:'Unencrypted'", "os_security.credential_guard_status:false"},
+            examples=["encryption_status:'Unencrypted'", "os_security.credential_guard_status:false"],
         ),
         limit: int = Field(
             default=100,
@@ -591,7 +591,7 @@ class DiscoverModule(BaseModule):
 
                 Examples: 'hostname.asc', 'last_seen_timestamp.desc', 'criticality.desc'
             """).strip(),
-            examples={"hostname.asc", "last_seen_timestamp.desc", "criticality.desc"},
+            examples=["hostname.asc", "last_seen_timestamp.desc", "criticality.desc"],
         ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """Search hosts by asset and configuration posture: drive encryption status, encrypted/unencrypted drives, OS security settings (Secure Boot, Credential Guard, IOMMU), disk/memory/CPU usage, asset criticality, and internet exposure.
@@ -637,7 +637,7 @@ class DiscoverModule(BaseModule):
         filter: str | None = Field(
             default=None,
             description="FQL filter expression. See `falcon://discover/accounts/fql-guide` for syntax.",
-            examples={"admin_privileges:'Yes'", "account_type:'Local'"},
+            examples=["admin_privileges:'Yes'", "account_type:'Local'"],
         ),
         limit: int = Field(
             default=100,
@@ -664,7 +664,7 @@ class DiscoverModule(BaseModule):
 
                 Examples: 'username|asc', 'last_successful_login_timestamp|desc'
             """).strip(),
-            examples={"username|asc", "last_successful_login_timestamp|desc"},
+            examples=["username|asc", "last_successful_login_timestamp|desc"],
         ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """Search local and Active Directory accounts inventoried by Falcon Discover.

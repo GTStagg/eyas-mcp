@@ -58,7 +58,7 @@ class ServerlessModule(BaseModule):
         self,
         filter: str = Field(
             description="FQL filter expression (required). See `falcon://serverless/vulnerabilities/fql-guide` for syntax.",
-            examples={"cloud_provider:'aws'", "severity:'HIGH'"},
+            examples=["cloud_provider:'aws'", "severity:'HIGH'"],
         ),
         limit: int | None = Field(
             default=10,
@@ -98,11 +98,11 @@ class ServerlessModule(BaseModule):
 
                 Examples: 'severity', 'cloud_provider', 'first_seen_timestamp'
             """).strip(),
-            examples={
+            examples=[
                 "severity",
                 "cloud_provider",
                 "first_seen_timestamp",
-            },
+            ],
         ),
     ) -> list[dict[str, Any]]:
         """Search for vulnerabilities in serverless functions across all cloud providers.

@@ -160,7 +160,7 @@ class HostGroupsModule(BaseModule):
                 "FQL filter expression. See `falcon://host-groups/search/fql-guide` "
                 "for syntax."
             ),
-            examples={"group_type:'static'", "name:'Production Servers'"},
+            examples=["group_type:'static'", "name:'Production Servers'"],
         ),
         limit: int = Field(
             default=100,
@@ -193,7 +193,7 @@ class HostGroupsModule(BaseModule):
 
                 Examples: 'name.asc', 'created_timestamp.desc'
             """).strip(),
-            examples={"name.asc", "created_timestamp.desc"},
+            examples=["name.asc", "created_timestamp.desc"],
         ),
         exact_name: str | None = Field(
             default=None,
@@ -204,7 +204,7 @@ class HostGroupsModule(BaseModule):
                 "miss the group or return near matches. Combines with `filter`; "
                 "`limit` and `offset` then apply to the exact matches."
             ),
-            examples={"Production Servers"},
+            examples=["Production Servers"],
         ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """Search for host groups in your CrowdStrike environment.
@@ -404,7 +404,7 @@ class HostGroupsModule(BaseModule):
                 "FQL filter expression on HOST attributes. See "
                 "`falcon://hosts/search/fql-guide` for syntax."
             ),
-            examples={"platform_name:'Windows'", "hostname:'PC*'"},
+            examples=["platform_name:'Windows'", "hostname:'PC*'"],
         ),
         limit: int = Field(
             default=100,
@@ -419,7 +419,7 @@ class HostGroupsModule(BaseModule):
         sort: str | None = Field(
             default=None,
             description="Sort members using host FQL sort syntax (e.g. 'hostname.asc', 'last_seen.desc').",
-            examples={"hostname.asc", "last_seen.desc"},
+            examples=["hostname.asc", "last_seen.desc"],
         ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """Search for the host members of a specific host group.

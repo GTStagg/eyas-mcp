@@ -151,7 +151,7 @@ class IntelModule(BaseModule):
             ge=1,
             le=5000,
             description="Maximum number of records to return. Max 5000",
-            examples={10, 20, 100},
+            examples=[10, 20, 100],
         ),
         offset: int | None = Field(
             default=None,
@@ -167,12 +167,12 @@ class IntelModule(BaseModule):
                 "last_modified_date. Prefer the dot separator, supported on every "
                 "Falcon sort endpoint. Ex: created_date.desc"
             ),
-            examples={"created_date.desc"},
+            examples=["created_date.desc"],
         ),
         q: str | None = Field(
             default=None,
             description="Free text search across all indexed fields.",
-            examples={"BEAR"},
+            examples=["BEAR"],
         ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """Research threat actors and adversary groups tracked by CrowdStrike intelligence.
@@ -229,7 +229,7 @@ class IntelModule(BaseModule):
                 "separator, supported on every Falcon sort endpoint. Ex: "
                 "published_date.desc"
             ),
-            examples={"published_date.desc"},
+            examples=["published_date.desc"],
         ),
         q: str | None = Field(
             default=None,
@@ -304,7 +304,7 @@ class IntelModule(BaseModule):
                 "target_countries, target_industries, type, created_date, "
                 "last_modified_date. Ex: created_date.desc"
             ),
-            examples={"created_date.desc"},
+            examples=["created_date.desc"],
         ),
         q: str | None = Field(
             default=None,
@@ -342,12 +342,12 @@ class IntelModule(BaseModule):
         actor: str = Field(
             ...,
             description="Threat actor name or ID",
-            examples={"WARP PANDA", "234987", "revenant spider"},
+            examples=["WARP PANDA", "234987", "revenant spider"],
         ),
         format: str = Field(
             default="json",
             description="Report format. Accepted options: 'csv' or 'json'.",
-            examples={"json", "csv"},
+            examples=["json", "csv"],
         ),
     ) -> list[dict[str, Any]] | str:
         """Generate a MITRE ATT&CK report for a given threat actor.

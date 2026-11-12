@@ -1000,7 +1000,7 @@ class NGSIEMModule(BaseModule):
                 "Search start time as an ISO 8601 timestamp. Required unless hours_back "
                 "is given. Example: start='2025-01-01T00:00:00Z'"
             ),
-            examples={"2025-01-01T00:00:00Z"},
+            examples=["2025-01-01T00:00:00Z"],
         ),
         repository: str = Field(
             default="search-all",
@@ -1025,7 +1025,7 @@ class NGSIEMModule(BaseModule):
                 "If not provided, defaults to the current time. "
                 "Example: end='2025-02-06T00:00:00Z'"
             ),
-            examples={"2025-01-01T00:00:00Z"},
+            examples=["2025-01-01T00:00:00Z"],
         ),
         hours_back: float | None = Field(
             default=None,
@@ -1346,7 +1346,7 @@ class NGSIEMModule(BaseModule):
         filter: str | None = Field(
             default=None,
             description="FQL filter expression for data connections.",
-            examples={"status:'Active'"},
+            examples=["status:'Active'"],
         ),
         limit: int = Field(
             default=100,
@@ -1362,7 +1362,7 @@ class NGSIEMModule(BaseModule):
         sort: str | None = Field(
             default=None,
             description="Sort field and direction, for example 'name.asc'.",
-            examples={"name.asc", "status.desc"},
+            examples=["name.asc", "status.desc"],
         ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """List Next-Gen SIEM data connections.
@@ -1414,12 +1414,12 @@ class NGSIEMModule(BaseModule):
         filter: str | None = Field(
             default=None,
             description="Filter on parser name. Only a text match on name is supported: name:~'value'.",
-            examples={"name:~'okta'"},
+            examples=["name:~'okta'"],
         ),
         parser_type: str | None = Field(
             default=None,
             description="Only return parsers of this type: 'ootb' (built-in), 'custom', or 'extension'.",
-            examples={"ootb", "custom", "extension"},
+            examples=["ootb", "custom", "extension"],
         ),
         update_available: bool | None = Field(
             default=None,
@@ -1481,12 +1481,12 @@ class NGSIEMModule(BaseModule):
                 "'all', 'falcon', 'third-party', 'dashboards', 'parsers-repository', "
                 "or 'query-audit'. Default is 'all'."
             ),
-            examples={"all", "third-party"},
+            examples=["all", "third-party"],
         ),
         filter: str | None = Field(
             default=None,
             description="Filter on file name. Only a text match on name is supported: name:~'value'.",
-            examples={"name:~'allowlist'"},
+            examples=["name:~'allowlist'"],
         ),
         limit: int = Field(
             default=100,
@@ -1591,14 +1591,14 @@ class NGSIEMModule(BaseModule):
         self,
         device_id: str = Field(
             description="Host to examine: its 32-character hexadecimal agent ID (AID).",
-            examples={"0123456789abcdef0123456789abcdef"},
+            examples=["0123456789abcdef0123456789abcdef"],
         ),
         pivot_time: str = Field(
             description=(
                 "ISO 8601 timestamp near when the pivot process ran, such as the "
                 "detection's timestamp. The search window is centred on it."
             ),
-            examples={"2025-01-01T12:00:00Z"},
+            examples=["2025-01-01T12:00:00Z"],
         ),
         pivot_process_id: str | int | None = Field(
             default=None,
@@ -1607,7 +1607,7 @@ class NGSIEMModule(BaseModule):
                 "for example from a detection's process details. Preferred over "
                 "`pivot_image`. One of the two is required."
             ),
-            examples={"123456789012"},
+            examples=["123456789012"],
         ),
         pivot_image: str | None = Field(
             default=None,
@@ -1617,7 +1617,7 @@ class NGSIEMModule(BaseModule):
                 "closest to `pivot_time` is taken as the pivot. Letters, digits, '.', "
                 "'_', '-' and spaces only."
             ),
-            examples={"powershell.exe"},
+            examples=["powershell.exe"],
         ),
         window_minutes: int = Field(
             default=10,
@@ -1954,7 +1954,7 @@ class NGSIEMModule(BaseModule):
                 "'formatTime'. Matched exactly, then ignoring case, then by close or "
                 "partial matches."
             ),
-            examples={"groupBy", "sort", "array:filter"},
+            examples=["groupBy", "sort", "array:filter"],
         ),
     ) -> dict[str, Any]:
         """Look up a CQL (LogScale) query function before using it in a query.

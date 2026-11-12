@@ -183,7 +183,7 @@ class CustomIOAModule(BaseModule):
         filter: str | None = Field(
             default=None,
             description="FQL filter expression. See `falcon://custom-ioa/rule-groups/fql-guide` for syntax.",
-            examples={"platform:'windows'+enabled:true", "rules.pattern_severity:'high'"},
+            examples=["platform:'windows'+enabled:true", "rules.pattern_severity:'high'"],
         ),
         limit: int = Field(
             default=10,
@@ -198,7 +198,7 @@ class CustomIOAModule(BaseModule):
         sort: str | None = Field(
             default=None,
             description="Sort rule groups using FQL sort syntax. Fields: created_by, created_on, enabled, modified_by, modified_on, name, description. Example: 'modified_on.desc'",
-            examples={"modified_on.desc", "name.asc"},
+            examples=["modified_on.desc", "name.asc"],
         ),
         q: str | None = Field(
             default=None,
@@ -311,11 +311,11 @@ class CustomIOAModule(BaseModule):
         self,
         name: str = Field(
             description="Name for the new rule group.",
-            examples={"Suspicious PowerShell Activity", "Lateral Movement Detection"},
+            examples=["Suspicious PowerShell Activity", "Lateral Movement Detection"],
         ),
         platform: str = Field(
             description="Platform this rule group applies to. Allowed values: windows, mac, linux.",
-            examples={"windows", "mac", "linux"},
+            examples=["windows", "mac", "linux"],
         ),
         description: str | None = Field(
             default=None,
@@ -464,7 +464,7 @@ class CustomIOAModule(BaseModule):
         ),
         name: str = Field(
             description="Name for the new rule.",
-            examples={"Block cmd.exe spawned from Office", "Detect encoded PowerShell"},
+            examples=["Block cmd.exe spawned from Office", "Detect encoded PowerShell"],
         ),
         ruletype_id: str = Field(
             description="Rule type ID that defines the detection category. Use `falcon_get_ioa_rule_types` to find valid IDs.",
@@ -474,7 +474,7 @@ class CustomIOAModule(BaseModule):
         ),
         pattern_severity: str = Field(
             description="Severity level for this rule. Allowed values: critical, high, medium, low, informational.",
-            examples={"critical", "high", "medium", "low", "informational"},
+            examples=["critical", "high", "medium", "low", "informational"],
         ),
         field_values: list[dict[str, Any]] = Field(
             description=(
@@ -483,9 +483,9 @@ class CustomIOAModule(BaseModule):
                 "and optionally 'label', 'type', 'final_value', 'values' (list of label/value pairs). "
                 "Use `falcon_get_ioa_rule_types` to discover required fields for the chosen rule type."
             ),
-            examples={
+            examples=[
                 '[{"name": "GrandparentImageFilename", "value": ".*\\\\\\\\winword\\\\.exe", "label": "Grand Parent Image Filename"}]'
-            },
+            ],
         ),
         description: str | None = Field(
             default=None,
@@ -586,9 +586,9 @@ class CustomIOAModule(BaseModule):
                 "disposition_id, field_values. Give either this or `instance_id`, not both, "
                 "and leave the single-mode rule fields unset."
             ),
-            examples={
+            examples=[
                 '[{"instance_id": "1", "enabled": true}, {"instance_id": "2", "enabled": true}]'
-            },
+            ],
         ),
     ) -> list[dict[str, Any]]:
         """Update one or more Custom IOA behavioral detection rules in a rule group.
