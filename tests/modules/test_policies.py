@@ -83,6 +83,7 @@ class TestPoliciesModule(TestModules):
         """Test registering tools with the server."""
         expected_tools = [
             "falcon_search_policies",
+            "falcon_get_policies",
             "falcon_search_policy_members",
             "falcon_get_prevention_posture",
             "falcon_create_policy",
@@ -109,6 +110,7 @@ class TestPoliciesModule(TestModules):
         """Read and mutating tools must carry the correct annotations."""
         self.module.register_tools(self.mock_server)
         self.assert_tool_annotations("falcon_search_policies", READ_ONLY_ANNOTATIONS)
+        self.assert_tool_annotations("falcon_get_policies", READ_ONLY_ANNOTATIONS)
         self.assert_tool_annotations(
             "falcon_search_policy_members", READ_ONLY_ANNOTATIONS
         )
@@ -1154,3 +1156,456 @@ class TestPreventionPosture(TestModules):
         }
         result = self.module.get_prevention_posture(platform=None, only_flagged=False)
         self.assertIn("error", result)
+
+
+ID_A = "a" * 32
+ID_B = "b" * 32
+ID_C = "c" * 32
+ID_D = "d" * 32
+ID_DEFAULT = "e" * 32
+
+
+def _ok(resources: list | None = None) -> dict:
+    return {"status_code": 200, "body": {"resources": resources or []}}
+
+
+class TestGetPolicies(TestModules):
+    """falcon_get_policies returns full records by ID, split into found and not_found."""
+
+    def setUp(self):
+        self.setup_module(PoliciesModule)
+
+    def test_uses_get_op_per_type_and_keeps_input_order(self):
+        for policy_type, (_, _, get_op, _) in EXPECTED_OPS.items():
+            with self.subTest(policy_type=policy_type):
+                self.mock_client.command.reset_mock()
+                self.mock_client.command.return_value = _ok(
+                    [{"id": ID_B, "name": "b"}, {"id": ID_A, "name": "a"}]
+                )
+                result = self.module.get_policies(policy_type=policy_type, ids=[ID_A, ID_B])
+                call = self.mock_client.command.call_args
+                self.assertEqual(call[0][0], get_op)
+                self.assertEqual(call[1]["parameters"]["ids"], [ID_A, ID_B])
+                self.assertEqual([p["id"] for p in result["found"]], [ID_A, ID_B])
+                self.assertEqual(result["not_found"], [])
+
+    def test_404_with_partial_resources_maps_missing_ids_to_not_found(self):
+        self.mock_client.command.return_value = {
+            "status_code": 404,
+            "body": {
+                "resources": [{"id": ID_A, "name": "a"}],
+                "errors": [{"code": 404, "message": "Not Found", "id": ID_B}],
+            },
+        }
+        result = self.module.get_policies(policy_type="prevention", ids=[ID_B, ID_A])
+        self.assertEqual([p["id"] for p in result["found"]], [ID_A])
+        self.assertEqual(result["not_found"], [ID_B])
+
+    def test_200_with_fewer_resources_maps_missing_ids_to_not_found(self):
+        self.mock_client.command.return_value = _ok([{"id": ID_A}])
+        result = self.module.get_policies(policy_type="response", ids=[ID_A, ID_C])
+        self.assertEqual(result["not_found"], [ID_C])
+
+    def test_all_ids_unknown(self):
+        self.mock_client.command.return_value = {
+            "status_code": 404,
+            "body": {
+                "resources": None,
+                "errors": [{"code": 404, "message": "Not Found", "id": ID_A}],
+            },
+        }
+        result = self.module.get_policies(policy_type="prevention", ids=[ID_A])
+        self.assertEqual(result, {"found": [], "not_found": [ID_A]})
+
+    def test_other_errors_fail_the_call(self):
+        self.mock_client.command.return_value = {
+            "status_code": 404,
+            "body": {
+                "resources": [{"id": ID_A}],
+                "errors": [
+                    {"code": 404, "message": "Not Found", "id": ID_B},
+                    {"code": 500, "message": "backend unavailable"},
+                ],
+            },
+        }
+        result = self.module.get_policies(policy_type="prevention", ids=[ID_A, ID_B])
+        self.assertIn("error", result)
+
+    def test_403_is_an_error(self):
+        self.mock_client.command.return_value = {
+            "status_code": 403,
+            "body": {"errors": [{"code": 403, "message": "access denied"}]},
+        }
+        result = self.module.get_policies(policy_type="firewall", ids=[ID_A])
+        self.assertIn("error", result)
+
+    def test_404_without_errors_is_an_error(self):
+        self.mock_client.command.return_value = {"status_code": 404, "body": {}}
+        result = self.module.get_policies(policy_type="prevention", ids=[ID_A])
+        self.assertIn("error", result)
+
+    def test_dedupes_and_strips_ids(self):
+        self.mock_client.command.return_value = _ok([{"id": ID_A}])
+        self.module.get_policies(policy_type="prevention", ids=[f" {ID_A} ", ID_A, ""])
+        self.assertEqual(self.mock_client.command.call_args[1]["parameters"]["ids"], [ID_A])
+
+    def test_rejects_empty_and_too_many_ids(self):
+        for ids in ([], ["", " "], [f"{i:032x}" for i in range(101)]):
+            with self.subTest(count=len(ids)):
+                result = self.module.get_policies(policy_type="prevention", ids=ids)
+                self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()
+
+    def test_invalid_type(self):
+        result = self.module.get_policies(policy_type="bogus", ids=[ID_A])
+        self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()
+
+
+class TestPreventionSettingsShape(TestModules):
+    """Prevention settings are flattened to the [{id, value}] shape the update API takes."""
+
+    def setUp(self):
+        self.setup_module(PoliciesModule)
+        self.mock_client.command.return_value = _ok([{"id": ID_A}])
+
+    def _update(self, policy_type, settings):
+        return self.module.update_policy(
+            policy_type=policy_type, id=ID_A, name=None, description=None, settings=settings
+        )
+
+    def _sent_settings(self, policy_type="prevention"):
+        body = self.mock_client.command.call_args[1]["body"]
+        return body[self.module._BODY_WRAPPER[policy_type]][0]["settings"]
+
+    def test_grouped_settings_are_flattened(self):
+        grouped = [
+            {
+                "name": "Machine Learning",
+                "settings": [
+                    {
+                        "id": "CloudAntiMalware",
+                        "name": "Cloud Machine Learning",
+                        "type": "mlslider",
+                        "description": "...",
+                        "value": {"detection": "MODERATE", "prevention": "CAUTIOUS"},
+                    }
+                ],
+            },
+            {
+                "name": "Execution Blocking",
+                "settings": [
+                    {"id": "QuarantineOnWrite", "type": "toggle", "value": {"enabled": True}},
+                    {
+                        "id": "ScriptBasedExecution",
+                        "type": "toggle",
+                        "value": {"configured": True, "enabled": False},
+                    },
+                ],
+            },
+        ]
+        self._update("prevention", grouped)
+        self.assertEqual(
+            self._sent_settings(),
+            [
+                {
+                    "id": "CloudAntiMalware",
+                    "value": {"detection": "MODERATE", "prevention": "CAUTIOUS"},
+                },
+                {"id": "QuarantineOnWrite", "value": {"enabled": True}},
+                {"id": "ScriptBasedExecution", "value": {"configured": True, "enabled": False}},
+            ],
+        )
+
+    def test_flat_entries_lose_extra_keys(self):
+        self._update(
+            "prevention",
+            [
+                {
+                    "id": "QuarantineOnWrite",
+                    "name": "Quarantine",
+                    "type": "toggle",
+                    "value": {"enabled": False},
+                }
+            ],
+        )
+        self.assertEqual(
+            self._sent_settings(), [{"id": "QuarantineOnWrite", "value": {"enabled": False}}]
+        )
+
+    def test_mixed_grouped_and_flat_entries(self):
+        self._update(
+            "prevention",
+            [
+                {"id": "First", "value": {"enabled": True}},
+                {"name": "Group", "settings": [{"id": "Second", "value": {"enabled": False}}]},
+            ],
+        )
+        self.assertEqual(
+            self._sent_settings(),
+            [
+                {"id": "First", "value": {"enabled": True}},
+                {"id": "Second", "value": {"enabled": False}},
+            ],
+        )
+
+    def test_entry_without_id_or_value_is_rejected(self):
+        for bad in (
+            [{"value": {"enabled": True}}],
+            [{"id": "QuarantineOnWrite"}],
+            [{"name": "Group", "settings": [{"name": "no id", "value": {}}]}],
+            ["QuarantineOnWrite"],
+        ):
+            with self.subTest(settings=bad):
+                result = self._update("prevention", bad)
+                self.assertIn("error", result[0])
+                self.assertIn('"id"', result[0]["error"])
+        self.mock_client.command.assert_not_called()
+
+    def test_create_flattens_prevention_settings_too(self):
+        self.module.create_policy(
+            policy_type="prevention",
+            name="n",
+            platform_name="Windows",
+            description=None,
+            settings=[{"name": "G", "settings": [{"id": "X", "type": "toggle", "value": {}}]}],
+            clone_id=None,
+        )
+        self.assertEqual(self._sent_settings(), [{"id": "X", "value": {}}])
+
+    def test_other_types_are_left_untouched(self):
+        grouped = [{"name": "G", "settings": [{"id": "X", "type": "t", "value": {}}]}]
+        for policy_type in ("sensor_update", "device_control", "response", "content_update"):
+            with self.subTest(policy_type=policy_type):
+                self._update(policy_type, grouped)
+                self.assertEqual(self._sent_settings(policy_type), grouped)
+
+    def test_prevention_dict_settings_pass_through(self):
+        self._update("prevention", {"id": "X", "value": {}})
+        self.assertEqual(self._sent_settings(), {"id": "X", "value": {}})
+
+
+class TestPlatformNameNormalization(TestModules):
+    """platform_name is sent in the API's canonical case."""
+
+    def setUp(self):
+        self.setup_module(PoliciesModule)
+        self.mock_client.command.return_value = _ok([{"id": ID_A}])
+
+    def test_create_normalizes_case(self):
+        for given, expected in (
+            ("windows", "Windows"),
+            ("MAC", "Mac"),
+            (" linux ", "Linux"),
+            ("Windows", "Windows"),
+            ("all", "all"),
+        ):
+            with self.subTest(given=given):
+                self.module.create_policy(
+                    policy_type="prevention",
+                    name="n",
+                    platform_name=given,
+                    description=None,
+                    settings=None,
+                    clone_id=None,
+                )
+                body = self.mock_client.command.call_args[1]["body"]
+                self.assertEqual(body["resources"][0]["platform_name"], expected)
+
+    def test_precedence_normalizes_case(self):
+        self.module.set_policy_precedence(
+            policy_type="firewall", ids=[ID_A, ID_B], platform_name="mac"
+        )
+        body = self.mock_client.command.call_args[1]["body"]
+        self.assertEqual(body["platform_name"], "Mac")
+
+
+class TestDeleteDisableFirst(TestModules):
+    """disable_first disables the policies before deleting them."""
+
+    def setUp(self):
+        self.setup_module(PoliciesModule)
+
+    def test_default_does_not_disable(self):
+        self.mock_client.command.return_value = _ok()
+        self.module.delete_policies(policy_type="prevention", ids=[ID_A])
+        self.assertEqual(self.mock_client.command.call_count, 1)
+        self.assertEqual(self.mock_client.command.call_args[0][0], "deletePreventionPolicies")
+
+    def test_disables_then_deletes(self):
+        for policy_type in EXPECTED_OPS:
+            with self.subTest(policy_type=policy_type):
+                self.mock_client.command.reset_mock()
+                self.mock_client.command.side_effect = [_ok([{"id": ID_A}]), _ok()]
+                self.module.delete_policies(
+                    policy_type=policy_type, ids=[ID_A, ID_B], disable_first=True
+                )
+                first, second = self.mock_client.command.call_args_list
+                ops = self.module._OPERATIONS[policy_type]
+                self.assertEqual(first[0][0], ops["action"])
+                self.assertEqual(first[1]["parameters"], {"action_name": "disable"})
+                self.assertEqual(first[1]["body"], {"ids": [ID_A, ID_B]})
+                self.assertEqual(second[0][0], ops["delete"])
+                self.assertEqual(second[1]["parameters"]["ids"], [ID_A, ID_B])
+
+    def test_disable_failure_stops_the_delete(self):
+        self.mock_client.command.return_value = {
+            "status_code": 400,
+            "body": {"errors": [{"code": 400, "message": "bad request"}]},
+        }
+        result = self.module.delete_policies(
+            policy_type="sensor_update", ids=[ID_A], disable_first=True
+        )
+        self.assertIn("error", result[0])
+        self.assertIn("nothing was deleted", result[0]["error"])
+        self.assertEqual(self.mock_client.command.call_count, 1)
+        self.assertEqual(
+            self.mock_client.command.call_args[0][0], "performSensorUpdatePoliciesAction"
+        )
+
+
+class TestRelativePrecedence(TestModules):
+    """set_policy_precedence builds the complete order itself in relative mode."""
+
+    def setUp(self):
+        self.setup_module(PoliciesModule)
+
+    def _call(self, **kwargs):
+        args = {
+            "policy_type": "prevention",
+            "ids": None,
+            "platform_name": "Windows",
+            "move_id": None,
+            "place_first": False,
+            "place_after": None,
+        }
+        args.update(kwargs)
+        return self.module.set_policy_precedence(**args)
+
+    def _policies(self):
+        # Listed out of order; the Default policy must be left out.
+        return [
+            {"id": ID_C, "name": "c", "precedence": 3},
+            {"id": ID_DEFAULT, "name": "platform_default", "precedence": 4},
+            {"id": ID_A, "name": "a", "precedence": 1},
+            {"id": ID_B, "name": "b", "precedence": 2},
+        ]
+
+    def test_place_first(self):
+        self.mock_client.command.side_effect = [_ok(self._policies()), _ok()]
+        result = self._call(move_id=ID_C, place_first=True)
+        listing, update = self.mock_client.command.call_args_list
+        self.assertEqual(listing[0][0], "queryCombinedPreventionPolicies")
+        self.assertEqual(listing[1]["parameters"]["filter"], "platform_name:'Windows'")
+        self.assertEqual(listing[1]["parameters"]["sort"], "precedence.asc")
+        self.assertEqual(update[0][0], "setPreventionPoliciesPrecedence")
+        self.assertEqual(
+            update[1]["body"], {"ids": [ID_C, ID_A, ID_B], "platform_name": "Windows"}
+        )
+        self.assertEqual(result["ids_sent"], [ID_C, ID_A, ID_B])
+        self.assertEqual(result["result"], [])
+
+    def test_place_after(self):
+        self.mock_client.command.side_effect = [_ok(self._policies()), _ok()]
+        result = self._call(move_id=ID_A, place_after=ID_B, platform_name="windows")
+        self.assertEqual(result["ids_sent"], [ID_B, ID_A, ID_C])
+        listing, update = self.mock_client.command.call_args_list
+        self.assertEqual(listing[1]["parameters"]["filter"], "platform_name:'Windows'")
+        self.assertEqual(update[1]["body"]["platform_name"], "Windows")
+
+    def test_place_after_last(self):
+        self.mock_client.command.side_effect = [_ok(self._policies()), _ok()]
+        result = self._call(move_id=ID_A, place_after=ID_C)
+        self.assertEqual(result["ids_sent"], [ID_B, ID_C, ID_A])
+
+    def test_api_order_kept_when_precedence_missing(self):
+        policies = [
+            {"id": ID_B, "name": "b", "precedence": None},
+            {"id": ID_A, "name": "a"},
+            {"id": ID_DEFAULT, "name": "platform_default"},
+        ]
+        self.mock_client.command.side_effect = [_ok(policies), _ok()]
+        result = self._call(move_id=ID_A, place_first=True)
+        self.assertEqual(result["ids_sent"], [ID_A, ID_B])
+
+    def test_pages_through_the_listing(self):
+        first_page = [
+            {"id": f"{i:032x}", "name": f"p{i}", "precedence": i + 2} for i in range(500)
+        ]
+        second_page = [
+            {"id": ID_A, "name": "a", "precedence": 1},
+            {"id": ID_DEFAULT, "name": "platform_default", "precedence": 600},
+        ]
+        self.mock_client.command.side_effect = [_ok(first_page), _ok(second_page), _ok()]
+        result = self._call(move_id=ID_A, place_after=f"{0:032x}")
+        second_listing = self.mock_client.command.call_args_list[1]
+        self.assertEqual(second_listing[1]["parameters"]["offset"], 500)
+        sent = result["ids_sent"]
+        self.assertEqual(len(sent), 501)
+        self.assertEqual(sent[:3], [f"{0:032x}", ID_A, f"{1:032x}"])
+        self.assertNotIn(ID_DEFAULT, sent)
+
+    def test_content_update_lists_without_platform_filter(self):
+        policies = [
+            {"id": ID_A, "name": "a", "precedence": 1},
+            {"id": ID_B, "name": "b", "precedence": 2},
+        ]
+        self.mock_client.command.side_effect = [_ok(policies), _ok()]
+        result = self._call(
+            policy_type="content_update", platform_name=None, move_id=ID_B, place_first=True
+        )
+        listing, update = self.mock_client.command.call_args_list
+        self.assertEqual(listing[0][0], "queryCombinedContentUpdatePolicies")
+        self.assertNotIn("filter", listing[1]["parameters"])
+        self.assertEqual(update[1]["body"], {"ids": [ID_B, ID_A]})
+        self.assertEqual(result["ids_sent"], [ID_B, ID_A])
+
+    def test_unknown_or_default_move_id_is_rejected(self):
+        for move_id in (ID_D, ID_DEFAULT):
+            with self.subTest(move_id=move_id):
+                self.mock_client.command.reset_mock()
+                self.mock_client.command.side_effect = [_ok(self._policies())]
+                result = self._call(move_id=move_id, place_first=True)
+                self.assertIn("error", result[0])
+                self.assertIn(move_id, result[0]["error"])
+                self.assertEqual(self.mock_client.command.call_count, 1)
+
+    def test_unknown_anchor_is_rejected(self):
+        self.mock_client.command.side_effect = [_ok(self._policies())]
+        result = self._call(move_id=ID_A, place_after=ID_D)
+        self.assertIn("error", result[0])
+        self.assertIn(ID_D, result[0]["error"])
+        self.assertEqual(self.mock_client.command.call_count, 1)
+
+    def test_listing_error_is_returned(self):
+        self.mock_client.command.return_value = {
+            "status_code": 403,
+            "body": {"errors": [{"code": 403, "message": "access denied"}]},
+        }
+        result = self._call(move_id=ID_A, place_first=True)
+        self.assertIn("error", result[0])
+        self.assertEqual(self.mock_client.command.call_count, 1)
+
+    def test_invalid_mode_combinations_make_no_call(self):
+        for kwargs in (
+            {"ids": [ID_A], "move_id": ID_B, "place_first": True},
+            {"move_id": ID_A},
+            {"move_id": ID_A, "place_first": True, "place_after": ID_B},
+            {"move_id": ID_A, "place_after": ID_A},
+            {"place_first": True},
+            {"move_id": ID_A, "place_first": True, "platform_name": None},
+        ):
+            with self.subTest(kwargs=kwargs):
+                result = self._call(**kwargs)
+                self.assertIn("error", result[0])
+        self.mock_client.command.assert_not_called()
+
+    def test_complete_mode_unchanged(self):
+        self.mock_client.command.return_value = _ok()
+        result = self._call(ids=[ID_B, ID_A])
+        self.assertEqual(result, [])
+        self.assertEqual(self.mock_client.command.call_count, 1)
+        self.assertEqual(
+            self.mock_client.command.call_args[1]["body"],
+            {"ids": [ID_B, ID_A], "platform_name": "Windows"},
+        )

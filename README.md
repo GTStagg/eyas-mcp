@@ -48,7 +48,7 @@ See the [`docs/`](docs/overview.md) folder for configuration, usage and module r
 | [IOC](docs/modules/ioc.md) | Search, create, and remove custom indicators of compromise |
 | [MalQuery](docs/modules/malquery.md) | Search CrowdStrike's malware corpus by hash or byte pattern and check quota usage |
 | [NGSIEM](docs/modules/ngsiem.md) | Execute CQL queries against Next-Gen SIEM with an optional CQL pre-flight check and time and row limits, rebuild a host's process tree, look up CQL functions, and inspect data connections, parsers, and lookup files |
-| [Policies](docs/modules/policies.md) | Search, create, update, and delete prevention, sensor update, firewall, device control, response, and content update policies; manage host-group assignment, enable/disable, and precedence; report a host's prevention posture |
+| [Policies](docs/modules/policies.md) | Search, get by ID, create, update, and delete prevention, sensor update, firewall, device control, response, and content update policies; manage host-group assignment, enable/disable, and precedence; report a host's prevention posture |
 | [Quarantine](docs/modules/quarantine.md) | Search quarantine records, preview action counts, and release, unrelease, or delete quarantined files |
 | [Real Time Response](docs/modules/rtr.md) | Audit and summarize RTR sessions, run read-only triage on one or many hosts, wait until hosts are ready (optionally proven by a test script), run CrowdStrike-published Falcon scripts, and manage and run a custom RTR script library |
 | [Recon](docs/modules/recon.md) | Search and aggregate Falcon Intelligence Recon notifications (recon alerts), monitoring rules, and exposed-data records for dark web, leaked credentials, and typosquatting, and preview prospective rule noise |
