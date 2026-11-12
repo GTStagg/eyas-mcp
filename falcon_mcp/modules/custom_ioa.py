@@ -596,7 +596,9 @@ class CustomIOAModule(BaseModule):
         Requires rulegroup_version for optimistic locking. Get the current version
         and instance IDs from falcon_search_ioa_rule_groups. New rules are created
         disabled; batch mode (`rule_updates`) can enable a whole group's rules in
-        one call. Returns the updated rule records.
+        one call. The rule group is read first and any field left unset keeps
+        the rule's current value; a stale rulegroup_version or an unknown rule
+        returns an error without changing anything. Returns the updated rule records.
         """
         instance_id = unwrap_field_default(instance_id)
         rule_updates = unwrap_field_default(rule_updates)
@@ -631,21 +633,22 @@ class CustomIOAModule(BaseModule):
             validated = self._validate_rule_updates(rule_updates)
             if isinstance(validated, dict):
                 return [validated]
-            updates = [{**item, "rulegroup_version": rulegroup_version} for item in validated]
+            updates = validated
         else:
-            rule_update: dict[str, Any] = {
-                "instance_id": instance_id,
-                "rulegroup_version": rulegroup_version,
-            }
+            rule_update: dict[str, Any] = {"instance_id": instance_id}
             for key, value in single_fields.items():
                 if value is not None:
                     rule_update[key] = value
             updates = [rule_update]
 
+        completed = self._complete_rule_updates(rulegroup_id, rulegroup_version, updates)
+        if isinstance(completed, dict):
+            return [completed]
+
         body: dict[str, Any] = {
             "rulegroup_id": rulegroup_id,
             "rulegroup_version": rulegroup_version,
-            "rule_updates": updates,
+            "rule_updates": completed,
         }
         comment = _clean_comment(comment)
         if comment is not None:
@@ -662,6 +665,80 @@ class CustomIOAModule(BaseModule):
             return [result]
 
         return result
+
+    def _complete_rule_updates(
+        self,
+        rulegroup_id: str,
+        rulegroup_version: int,
+        updates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Fill each partial rule update with the rule's current values.
+
+        Falcon expects every `rule_updates` item to carry the full rule, so the
+        rule group is read once and any field the caller left unset is taken
+        from the live rule (`description` defaults to "" when the rule has none).
+        Returns the completed items, or an error dict when the read fails, the
+        caller's rulegroup_version is stale, or a rule is not in the group.
+        """
+        groups = self._base_get_by_ids(
+            operation="get_rule_groupsMixin0",
+            ids=[rulegroup_id],
+            use_params=True,
+        )
+        if isinstance(groups, dict):
+            return _format_error_response(
+                f"Could not read rule group '{rulegroup_id}' to complete the rule "
+                "updates, so nothing was changed.",
+                details=groups,
+                operation="get_rule_groupsMixin0",
+            )
+        group = next(
+            (g for g in groups if isinstance(g, dict) and g.get("id") == rulegroup_id),
+            None,
+        )
+        if group is None:
+            return _format_error_response(
+                f"Rule group '{rulegroup_id}' was not found, so nothing was changed. "
+                "Use falcon_search_ioa_rule_groups to find a valid rulegroup_id.",
+                operation="get_rule_groupsMixin0",
+            )
+
+        live_version = group.get("version")
+        if live_version is not None and str(live_version) != str(rulegroup_version):
+            return _format_error_response(
+                f"rulegroup_version {rulegroup_version} is stale: rule group "
+                f"'{rulegroup_id}' is at version {live_version}. Nothing was changed; "
+                "retry with the current version.",
+                operation="update_rules_v2",
+            )
+
+        rules = {
+            rule.get("instance_id"): rule
+            for rule in group.get("rules") or []
+            if isinstance(rule, dict)
+        }
+        missing = [u["instance_id"] for u in updates if u["instance_id"] not in rules]
+        if missing:
+            return _format_error_response(
+                f"Rule(s) not found in rule group '{rulegroup_id}': {', '.join(missing)}. "
+                "Nothing was changed.",
+                operation="update_rules_v2",
+            )
+
+        completed: list[dict[str, Any]] = []
+        for update in updates:
+            live = rules[update["instance_id"]]
+            item: dict[str, Any] = {}
+            for key in _RULE_UPDATE_FIELD_TYPES:
+                if update.get(key) is not None:
+                    item[key] = update[key]
+                elif live.get(key) is not None:
+                    item[key] = live[key]
+            item.setdefault("description", "")
+            item.setdefault("field_values", [])
+            item["rulegroup_version"] = rulegroup_version
+            completed.append(item)
+        return completed
 
     @staticmethod
     def _validate_rule_updates(

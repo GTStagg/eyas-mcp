@@ -142,6 +142,7 @@ API_SCOPE_REQUIREMENTS = {
     "UpdateQfByQuery": ["Quarantined Files:write"],
     # Custom IOA operations
     "query_rule_groups_full": ["Custom IOA Rules:read"],
+    "get_rule_groupsMixin0": ["Custom IOA Rules:read"],
     "query_platformsMixin0": ["Custom IOA Rules:read"],
     "get_platformsMixin0": ["Custom IOA Rules:read"],
     "query_rule_types": ["Custom IOA Rules:read"],

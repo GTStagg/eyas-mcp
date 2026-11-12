@@ -126,14 +126,16 @@ criteria the rule matches against (process names, file paths, command line regex
 > [!CAUTION]
 > This tool performs destructive operations.
 
-**Required scopes:** `Custom IOA Rules:write`
+**Required scopes:** `Custom IOA Rules:read`, `Custom IOA Rules:write`
 
 Update one or more Custom IOA behavioral detection rules in a rule group.
 
 Requires rulegroup_version for optimistic locking. Get the current version
 and instance IDs from falcon_search_ioa_rule_groups. New rules are created
 disabled; batch mode (`rule_updates`) can enable a whole group's rules in
-one call. Returns the updated rule records.
+one call. The rule group is read first and any field left unset keeps
+the rule's current value; a stale rulegroup_version or an unknown rule
+returns an error without changing anything. Returns the updated rule records.
 
 **Example prompts:**
 

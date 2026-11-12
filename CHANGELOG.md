@@ -5,6 +5,7 @@
 ### Features
 
 * **custom ioa:** `falcon_update_ioa_rule` takes an optional `rule_updates` list to update up to 100 rules in one rule group in a single call, for example to enable a new group's rules
+* **custom ioa:** `falcon_update_ioa_rule` reads the rule group first and sends each rule in full, filling fields the caller left unset from the live rule; a stale `rulegroup_version` or an unknown rule now returns an error without writing
 * **exclusions:** `falcon_create_exclusion` defaults an IOA `cl_regex` to `.*` when it is not given
 * **exclusions:** `falcon_create_exclusion` takes `skip_if_duplicate` to return an existing IOA exclusion (same `pattern_id`, `ifn_regex` and `cl_regex`) or ML exclusion (same `value`) instead of creating another
 
