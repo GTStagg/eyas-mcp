@@ -529,15 +529,14 @@ class HostGroupsModule(BaseModule):
         if not group_ids:
             return response
 
-        groups = self._base_get_by_ids(
-            operation="getHostGroups",
-            ids=group_ids,
-            use_params=True,
-        )
-        if not isinstance(groups, list):
-            return [groups]
+        # A group deleted since the host record was written comes back as a per-ID
+        # 404; _lookup_host_groups keeps the other groups, and the missing ID lands
+        # in unresolved_group_ids below instead of failing the call.
+        lookup = self._lookup_host_groups(list(dict.fromkeys(group_ids)))
+        if isinstance(lookup, dict):
+            return [lookup]
 
-        groups = self._reorder_by_ids(group_ids, groups, id_field="id")
+        groups = self._reorder_by_ids(group_ids, lookup[0], id_field="id")
         response["results"] = groups
         response["count"] = len(groups)
 

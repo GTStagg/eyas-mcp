@@ -11,6 +11,10 @@
 * **host groups:** new read-only `falcon_get_host_groups` tool returns host groups by ID with an explicit `not_found` list
 * **host groups:** `falcon_search_host_groups` takes `exact_name` to find a group by its exact, case-sensitive name, since FQL name matching is unreliable for names with spaces or hyphens
 
+### Bug Fixes
+
+* **host groups:** `falcon_get_host_group_membership` lists a host group that no longer exists under `unresolved_group_ids` instead of failing the whole call
+
 ### Documentation
 
 * name eyas-mcp throughout the docs, refresh the README module table, and update `CLAUDE.md` for the public repository and release rules

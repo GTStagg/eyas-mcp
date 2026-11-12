@@ -813,6 +813,53 @@ class TestHostGroupsModule(TestModules):
         self.assertEqual(result["count"], 1)
         self.assertEqual(result["unresolved_group_ids"], ["gone"])
 
+    def test_get_host_group_membership_deleted_group_404_is_unresolved(self):
+        """A deleted group's per-ID 404 keeps the other groups instead of failing."""
+        self.mock_client.command.side_effect = [
+            {
+                "status_code": 200,
+                "body": {"resources": [{"device_id": AID, "groups": [GROUP_A, GROUP_B]}]},
+            },
+            _groups_response([_group(GROUP_A, "static")], missing=[GROUP_B]),
+        ]
+
+        result = self.module.get_host_group_membership(device_id=AID)
+
+        self.assertNotIsInstance(result, list)
+        self.assertEqual([g["id"] for g in result["results"]], [GROUP_A])
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["unresolved_group_ids"], [GROUP_B])
+
+    def test_get_host_group_membership_all_groups_deleted(self):
+        """When every group on the record is gone, all are reported unresolved."""
+        self.mock_client.command.side_effect = [
+            {
+                "status_code": 200,
+                "body": {"resources": [{"device_id": AID, "groups": [GROUP_A]}]},
+            },
+            _groups_response([], missing=[GROUP_A]),
+        ]
+
+        result = self.module.get_host_group_membership(device_id=AID)
+
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["count"], 0)
+        self.assertEqual(result["unresolved_group_ids"], [GROUP_A])
+
+    def test_get_host_group_membership_404_without_ids_is_an_error(self):
+        """A 404 whose errors don't name group IDs still fails the call."""
+        self.mock_client.command.side_effect = [
+            {
+                "status_code": 200,
+                "body": {"resources": [{"device_id": AID, "groups": [GROUP_A]}]},
+            },
+            {"status_code": 404, "body": {"errors": [{"code": 404, "message": "Not Found"}]}},
+        ]
+
+        result = self.module.get_host_group_membership(device_id=AID)
+
+        self.assertIn("error", result[0])
+
     def test_get_host_group_membership_unknown_device(self):
         """An unknown device ID is an error, not an empty membership."""
         self.mock_client.command.return_value = {"status_code": 200, "body": {"resources": []}}
