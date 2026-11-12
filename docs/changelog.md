@@ -5,6 +5,16 @@
 
 ## Unreleased
 
+### Features
+
+* **ngsiem:** `falcon_get_process_tree` takes `time_budget_seconds` and returns the tree found so far with `partial` set when the budget runs out
+* **ngsiem:** process tree nodes carry the sensor's raw signing fields in `signing`
+* **ngsiem:** `check_cql` on `falcon_search_ngsiem` warns about calls to unknown CQL functions and suggests the closest names, without blocking the search
+
+### Bug Fixes
+
+* **detections:** `falcon_search_detections` and `falcon_get_detection_details` fetch alerts in batches of at most 1000 ids
+
 ### Documentation
 
 * name eyas-mcp throughout the docs, refresh the README module table, and update `CLAUDE.md` for the public repository and release rules

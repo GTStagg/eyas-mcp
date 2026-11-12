@@ -9,7 +9,6 @@ query functions.
 """
 
 import asyncio
-import difflib
 import json
 import os
 import re
@@ -24,7 +23,7 @@ from mcp.server import FastMCP
 from mcp.server.fastmcp.resources import TextResource
 from pydantic import AnyUrl, Field
 
-from falcon_mcp.common.cql_lint import lint_cql
+from falcon_mcp.common.cql_lint import NON_FUNCTION_HINTS, lint_cql, suggest_cql_functions
 from falcon_mcp.common.errors import _format_error_response, handle_api_response
 from falcon_mcp.common.logging import get_logger
 from falcon_mcp.common.utils import unwrap_field_default
@@ -228,6 +227,23 @@ _PROCESS_ROLLUP_FIELDS = (
     "UserSid",
     "SHA256HashData",
     "ProcessStartTime",
+    # Raw sensor signing fields. Which ones are populated depends on the platform:
+    # Windows events carry SignInfoFlags, macOS events carry SigningId and
+    # CodeSigningFlags, and Linux events carry none. FileSignInfo was empty on every
+    # ProcessRollup2 event in a live check but is kept in case a tenant fills it.
+    # The bitmasks are passed through undecoded: their bit meanings are not verified.
+    "FileSignInfo",
+    "SignInfoFlags",
+    "SigningId",
+    "CodeSigningFlags",
+)
+
+# Node `signing` keys and the ProcessRollup2 fields they come from.
+_SIGNING_FIELDS = (
+    ("file_sign_info", "FileSignInfo"),
+    ("sign_info_flags", "SignInfoFlags"),
+    ("signing_id", "SigningId"),
+    ("code_signing_flags", "CodeSigningFlags"),
 )
 
 
@@ -309,6 +325,16 @@ def _number(value: Any) -> float | None:
         return None
 
 
+def _signing(event: dict[str, Any]) -> dict[str, str] | None:
+    """Collect the raw signing fields an event carries, or None when it has none."""
+    signing = {
+        key: str(event[source])
+        for key, source in _SIGNING_FIELDS
+        if event.get(source) not in (None, "")
+    }
+    return signing or None
+
+
 def _process_node(event: dict[str, Any]) -> dict[str, Any]:
     """Shape a ProcessRollup2 event into a tree node.
 
@@ -335,6 +361,7 @@ def _process_node(event: dict[str, Any]) -> dict[str, Any]:
         "user_name": event.get("UserName") or None,
         "user_sid": event.get("UserSid") or None,
         "sha256": event.get("SHA256HashData") or None,
+        "signing": _signing(event),
         "process_start_time": _epoch_ms_to_iso(start_ms) if start_seconds is not None else None,
         "timestamp": _epoch_ms_to_iso(timestamp_ms),
         "_start_ms": start_ms,
@@ -683,13 +710,7 @@ def _load_cql_catalog() -> dict[str, dict[str, Any]]:
 
 
 # Names models reach for that are not CQL functions, with what to use instead.
-_CQL_NON_FUNCTIONS = {
-    "limit": "Use head(N) to keep the first N rows; to cap sort(), pass limit=N inside it.",
-    "where": "Filter by writing the condition as its own pipeline stage, or use test().",
-    "dedup": "Use groupBy() on the fields that identify a duplicate, or head() per group.",
-    "distinct": "Use groupBy() for distinct values, or count(field, distinct=true).",
-    "fields": "Use select() or table() to choose fields.",
-}
+_CQL_NON_FUNCTIONS = NON_FUNCTION_HINTS
 
 
 @dataclass
@@ -699,6 +720,11 @@ class _SearchBudget:
     deadline: float
     searches: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # Set when the caller passed time_budget_seconds: a search the budget cuts short
+    # then yields the rows it found so far instead of nothing.
+    time_budget_seconds: int | None = None
+    # Searches the time budget stopped early or left unstarted.
+    cut_short: list[str] = field(default_factory=list)
 
 
 def _sorted_nodes(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1017,7 +1043,8 @@ class NGSIEMModule(BaseModule):
                 "with ok=false, the issues in `cql_lint` and a corrected query in `fix`: "
                 "limit(N) instead of head(N), single-quoted strings, a tag field such as "
                 "event_simpleName without its # prefix, and sort() without limit=, which "
-                "silently keeps only 200 rows."
+                "silently keeps only 200 rows. Calls to unknown function names don't "
+                "block the search; they come back in `cql_warnings` with suggestions."
             ),
         ),
         max_rows: int | None = Field(
@@ -1076,9 +1103,12 @@ class NGSIEMModule(BaseModule):
         if repository_error is not None:
             return repository_error
 
+        cql_warnings: list[dict[str, Any]] = []
         if check_cql:
-            issues, fixed = lint_cql(query_string)
-            if issues:
+            issues, fixed = lint_cql(query_string, known_functions=_load_cql_catalog())
+            cql_warnings = [issue for issue in issues if issue["severity"] == "warning"]
+            # Only errors stop the search; warnings ride along with the results.
+            if len(cql_warnings) < len(issues):
                 return {
                     "ok": False,
                     "error": "The CQL query has mistakes that would fail or return wrong rows.",
@@ -1103,7 +1133,11 @@ class NGSIEMModule(BaseModule):
         )
 
         if outcome.error is not None:
-            return self._format_cql_error_response(outcome.error, query_string)
+            error = self._format_cql_error_response(outcome.error, query_string)
+            if cql_warnings:
+                # The API's own error may well be the unknown function warned about.
+                error["cql_warnings"] = cql_warnings
+            return error
 
         if outcome.timed_out and bounded:
             envelope = self._build_job_envelope(
@@ -1115,7 +1149,7 @@ class NGSIEMModule(BaseModule):
                 "stopped. These are the rows found so far; narrow the window or the query "
                 "for a complete answer."
             )
-            return self._finish_bounded_envelope(envelope, max_rows, check_cql)
+            return self._finish_bounded_envelope(envelope, max_rows, check_cql, cql_warnings)
 
         if outcome.timed_out:
             # How far the job got, and whether cleanup actually stopped it.
@@ -1138,7 +1172,7 @@ class NGSIEMModule(BaseModule):
         envelope = self._build_job_envelope(outcome.events or [], outcome.job or {}, query_string)
         if bounded or max_rows is not None or check_cql:
             envelope.setdefault("partial", False)
-            return self._finish_bounded_envelope(envelope, max_rows, check_cql)
+            return self._finish_bounded_envelope(envelope, max_rows, check_cql, cql_warnings)
         return envelope
 
     @staticmethod
@@ -1146,6 +1180,7 @@ class NGSIEMModule(BaseModule):
         envelope: dict[str, Any],
         max_rows: int | None,
         check_cql: bool,
+        cql_warnings: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Apply the row cap and mark the envelope for callers that asked for bounds."""
         rows = envelope.get("results") or []
@@ -1155,6 +1190,7 @@ class NGSIEMModule(BaseModule):
             envelope["results"] = rows[:max_rows]
         if check_cql:
             envelope["ok"] = True
+            envelope["cql_warnings"] = cql_warnings or []
         return envelope
 
     async def _run_search_job(
@@ -1511,6 +1547,7 @@ class NGSIEMModule(BaseModule):
         remaining = budget.deadline - time.monotonic()
         if remaining < POLL_INTERVAL_SECONDS:
             budget.notes.append(f"Skipped the {purpose} search: the time budget was spent.")
+            budget.cut_short.append(purpose)
             return None
 
         outcome = await self._run_search_job(
@@ -1528,6 +1565,15 @@ class NGSIEMModule(BaseModule):
             status = "timed_out"
         else:
             status = "completed"
+        if outcome.timed_out and budget.time_budget_seconds is not None:
+            # As falcon_search_ngsiem does with a time budget: keep the rows found so far.
+            outcome.events = list(outcome.partial_events or [])
+            budget.cut_short.append(purpose)
+            budget.notes.append(
+                f"The {purpose} search did not finish within the "
+                f"{budget.time_budget_seconds}-second time budget, so it was stopped. "
+                "The tree uses the rows it found so far."
+            )
         budget.searches.append(
             {
                 "purpose": purpose,
@@ -1591,6 +1637,17 @@ class NGSIEMModule(BaseModule):
             le=1000,
             description="Maximum number of descendants to return: 1-1000. Default is 200.",
         ),
+        time_budget_seconds: int | None = Field(
+            default=None,
+            ge=MIN_TIME_BUDGET_SECONDS,
+            le=MAX_TIME_BUDGET_SECONDS,
+            description=(
+                "Finish all searches within this many seconds and return the tree built "
+                "so far with `partial` set to true, instead of an error. Use about 45 to "
+                "stay under a 60-second client timeout. Without it, the searches share "
+                "FALCON_MCP_NGSIEM_TIMEOUT seconds."
+            ),
+        ),
     ) -> dict[str, Any]:
         """Reconstruct the process tree around one process on one host from NGSIEM.
 
@@ -1602,7 +1659,10 @@ class NGSIEMModule(BaseModule):
         `pivot_time`, as with behavioural detections, it looks the process up over the
         previous 7 days and re-centres the window on its start. A missing parent gets
         one lookup over the same 7 days. At most 4 searches run, within
-        FALCON_MCP_NGSIEM_TIMEOUT seconds in total. `delivery_vector` is a heuristic
+        FALCON_MCP_NGSIEM_TIMEOUT seconds in total, or within `time_budget_seconds`,
+        after which the tree found so far comes back with `partial` set. Each node's
+        `signing` holds the raw sensor signing fields for its platform, if any.
+        `delivery_vector` is a heuristic
         suggestion of how the chain started (for example `phishing_doc`,
         `browser_drive_by`, `lateral_winrm`), based only on image names and command
         lines. `searches` lists each query run and `notes` explains any gap.
@@ -1614,6 +1674,7 @@ class NGSIEMModule(BaseModule):
         window_minutes = unwrap_field_default(window_minutes)
         ancestry_max = unwrap_field_default(ancestry_max)
         descendants_max = unwrap_field_default(descendants_max)
+        time_budget_seconds = unwrap_field_default(time_budget_seconds)
 
         # Validate everything before any search starts. Only the AID and process ids
         # reach CQL, and `_process_rollup_query` checks them again.
@@ -1662,8 +1723,56 @@ class NGSIEMModule(BaseModule):
                 return _format_error_response(
                     f"Invalid {label}: must be an integer from {low} to {high}."
                 )
+        if time_budget_seconds is not None and (
+            isinstance(time_budget_seconds, bool)
+            or not isinstance(time_budget_seconds, int)
+            or not MIN_TIME_BUDGET_SECONDS <= time_budget_seconds <= MAX_TIME_BUDGET_SECONDS
+        ):
+            return _format_error_response(
+                "Invalid time_budget_seconds: must be an integer from "
+                f"{MIN_TIME_BUDGET_SECONDS} to {MAX_TIME_BUDGET_SECONDS}."
+            )
 
-        budget = _SearchBudget(deadline=time.monotonic() + TIMEOUT_SECONDS)
+        bounded = time_budget_seconds is not None
+        overall_seconds = TIMEOUT_SECONDS if time_budget_seconds is None else time_budget_seconds
+        budget = _SearchBudget(
+            deadline=time.monotonic() + overall_seconds,
+            time_budget_seconds=time_budget_seconds,
+        )
+        tree = await self._build_process_tree(
+            budget,
+            device_id,
+            pivot_dt,
+            target_pid,
+            image_name,
+            window_minutes,
+            ancestry_max,
+            descendants_max,
+        )
+        if bounded and "error" not in tree:
+            tree["partial"] = bool(budget.cut_short)
+            if budget.cut_short:
+                stages = ", ".join(dict.fromkeys(budget.cut_short))
+                tree["partial_reason"] = (
+                    f"The searches did not finish within {time_budget_seconds} seconds, so "
+                    f"these stages were cut short: {stages}. This is the tree found so "
+                    "far; narrow window_minutes or raise time_budget_seconds for a "
+                    "complete answer."
+                )
+        return tree
+
+    async def _build_process_tree(
+        self,
+        budget: _SearchBudget,
+        device_id: str,
+        pivot_dt: datetime,
+        target_pid: str | None,
+        image_name: str | None,
+        window_minutes: int,
+        ancestry_max: int,
+        descendants_max: int,
+    ) -> dict[str, Any]:
+        """Run the searches and walks behind falcon_get_process_tree within `budget`."""
         window = timedelta(minutes=window_minutes)
         window_query = _process_rollup_query(device_id, _PROCESS_TREE_EVENT_LIMIT)
 
@@ -1740,7 +1849,7 @@ class NGSIEMModule(BaseModule):
                         "The pivot was not in the window around pivot_time; the window was "
                         "re-centred on the process's own start time."
                     )
-                else:
+                elif recentred is None or not recentred.timed_out:
                     budget.notes.append(
                         "The pivot was found by its process ID outside the window, but the "
                         "re-centred search returned nothing, so its relatives come from the "
@@ -1752,7 +1861,7 @@ class NGSIEMModule(BaseModule):
                     rows = [probe_node, *rows]
                 pivot_dt = center
                 result["window"]["anchor_recovered"] = True
-            elif probe is not None and probe.events is not None:
+            elif probe is not None and probe.events is not None and not probe.timed_out:
                 budget.notes.append(
                     f"No ProcessRollup2 event for TargetProcessId {target_pid} on this host "
                     "in the 7 days before pivot_time. Its telemetry may have aged out or "
@@ -1760,7 +1869,7 @@ class NGSIEMModule(BaseModule):
                 )
 
         if pivot is None:
-            if target_pid is None:
+            if target_pid is None and "window" not in budget.cut_short:
                 budget.notes.append(
                     f"No process named {image_name} on this host within {window_minutes} "
                     "minutes of pivot_time."
@@ -1783,7 +1892,7 @@ class NGSIEMModule(BaseModule):
         result["unresolved_parent_process_id"] = unresolved
         result["descendants_truncated"] = truncated
         result["delivery_vector"] = _classify_delivery_vector([pivot, *ancestry], widened)
-        if unresolved is not None:
+        if unresolved is not None and "parent_lookup" not in budget.cut_short:
             budget.notes.append(
                 f"Parent process {unresolved} was not found, so the ancestry stops there."
             )
@@ -1875,10 +1984,7 @@ class NGSIEMModule(BaseModule):
         if lowered in by_lower:
             return {"match": "case_insensitive", "function": dict(catalog[by_lower[lowered]])}
 
-        close = difflib.get_close_matches(lowered, list(by_lower), n=10, cutoff=0.6)
-        partial = sorted((n for n in by_lower if lowered in n), key=lambda n: (len(n), n))
-        ordered = list(dict.fromkeys([*close, *partial]))
-        candidates = [dict(catalog[by_lower[n]]) for n in ordered]
+        candidates = [dict(catalog[n]) for n in suggest_cql_functions(query, catalog)]
         response: dict[str, Any] = {
             "match": "candidates" if candidates else "none",
             "query": query,
