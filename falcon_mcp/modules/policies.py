@@ -28,8 +28,9 @@ from mcp.server.fastmcp.resources import TextResource
 from mcp.types import ToolAnnotations
 from pydantic import AnyUrl, Field
 
-from falcon_mcp.common.errors import _format_error_response
+from falcon_mcp.common.errors import _format_error_response, handle_api_response
 from falcon_mcp.common.logging import get_logger
+from falcon_mcp.common.utils import prepare_api_parameters, unwrap_field_default
 from falcon_mcp.modules.base import BaseModule
 from falcon_mcp.resources.policies import SEARCH_POLICIES_FQL_DOCUMENTATION
 
@@ -101,6 +102,62 @@ def _summarize_prevention_policy(policy: dict[str, Any]) -> dict[str, Any]:
         "flags": flags,
     }
 
+
+def _normalize_platform_name(platform_name: str | None) -> str | None:
+    """Return the API's spelling of a platform name ('windows' -> 'Windows').
+
+    The create and precedence endpoints reject lowercase platform names with HTTP
+    400. Values other than Windows, Mac or Linux pass through unchanged, so the API
+    stays the judge of anything else.
+    """
+    if not isinstance(platform_name, str):
+        return platform_name
+    return _POSTURE_PLATFORMS.get(platform_name.strip().lower(), platform_name)
+
+
+def _flatten_prevention_settings(settings: list[Any]) -> list[Any]:
+    """Flatten prevention settings into the `[{"id", "value"}]` shape the update API takes.
+
+    A prevention policy read returns its settings grouped by category:
+    `[{"name": <category>, "settings": [{"id", "name", "type", "value", ...}]}]`. The
+    update endpoint rejects that shape with HTTP 400 "Prevention settings must specify
+    an id" and accepts only a flat list of `{"id", "value"}`. Category entries (a
+    `settings` list and no `id`) are expanded, and every setting keeps only its `id`
+    and `value`. Entries that aren't dicts are kept as they are, for the caller to
+    reject.
+    """
+    flat: list[Any] = []
+    for entry in settings:
+        if (
+            isinstance(entry, dict)
+            and "id" not in entry
+            and isinstance(entry.get("settings"), list)
+        ):
+            flat.extend(_flatten_prevention_settings(entry["settings"]))
+        elif isinstance(entry, dict):
+            flat.append({key: entry[key] for key in ("id", "value") if key in entry})
+        else:
+            flat.append(entry)
+    return flat
+
+
+def _is_not_found_error(error: Any) -> bool:
+    """True when a get-by-IDs error entry reports one unknown ID."""
+    if not isinstance(error, dict):
+        return False
+    message = str(error.get("message", "")).strip().lower()
+    return error.get("code") == 404 or message == "not found"
+
+
+# Most IDs falcon_get_policies takes in one call.
+MAX_GET_POLICY_IDS = 100
+# Paging for the full listing behind a relative precedence move.
+PRECEDENCE_PAGE_SIZE = 500
+MAX_PRECEDENCE_POLICIES = 5000
+# Name of each platform's Default policy. It always evaluates last, can't be moved,
+# and the precedence endpoints expect it to be left out of the ordered list.
+DEFAULT_POLICY_NAME = "platform_default"
+
 # Valid policy types (the discriminator values exposed to the agent).
 POLICY_TYPES = (
     "prevention",
@@ -119,9 +176,8 @@ class PoliciesModule(BaseModule):
     # (1.6.2) and the live API on 2026-06-06. All operation-name string literals
     # are kept inside the class body so the doc-scope extractor can find them.
     #
-    # The `get` op is exposed only indirectly: device_control search is a two-step
-    # query->getV2 flow (the V1 combined op drops V2-only fields). There is no
-    # standalone get tool — search_policies returns full policy objects.
+    # The `get` op backs falcon_get_policies and the device_control search, which is
+    # a two-step query->getV2 flow (the V1 combined op drops V2-only fields).
     #
     # NOTE: revealUninstallToken / incrementUninstallToken are intentionally NOT
     # wrapped — they reveal/rotate device uninstall tokens (sensitive).
@@ -350,6 +406,12 @@ class PoliciesModule(BaseModule):
             server=server,
             method=self.search_policies,
             name="search_policies",
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.get_policies,
+            name="get_policies",
         )
 
         self._add_tool(
@@ -607,6 +669,87 @@ class PoliciesModule(BaseModule):
 
         return self._build_pagination_envelope(policies or [], pagination, filter)
 
+    # ---- Get by ID ----------------------------------------------------------------
+
+    def get_policies(
+        self,
+        policy_type: str = Field(
+            description=(
+                "Policy type. One of: 'prevention', 'sensor_update', 'firewall', "
+                "'device_control', 'response', 'content_update'."
+            ),
+        ),
+        ids: list[str] = Field(
+            description=f"IDs of the policies to retrieve, all of the given policy_type. At most {MAX_GET_POLICY_IDS}.",
+        ),
+    ) -> dict[str, Any]:
+        """Get full host-based policy records by policy ID.
+
+        Use this when you already have policy IDs (for example from a host's
+        device_policies or an earlier search) and need the complete record: name,
+        platform_name, enabled, settings (prevention_settings for prevention) and
+        host groups. Returns `found` (the records, in the order of `ids`) and
+        `not_found` (the IDs the tenant has no policy of that type for). Read-only.
+        """
+        type_error = self._validate_policy_type(policy_type)
+        if type_error is not None:
+            return type_error
+
+        operation = self._OPERATIONS[policy_type]["get"]
+        wanted: list[str] = []
+        for policy_id in ids or []:
+            cleaned = policy_id.strip() if isinstance(policy_id, str) else ""
+            if cleaned and cleaned not in wanted:
+                wanted.append(cleaned)
+        if not wanted:
+            return _format_error_response(
+                "A non-empty 'ids' list is required to get policies.",
+                operation=operation,
+            )
+        if len(wanted) > MAX_GET_POLICY_IDS:
+            return _format_error_response(
+                f"At most {MAX_GET_POLICY_IDS} policy IDs can be retrieved per call; "
+                f"got {len(wanted)}. Split the request.",
+                operation=operation,
+            )
+
+        response = self.client.command(
+            operation, parameters=prepare_api_parameters({"ids": wanted})
+        )
+
+        # When some IDs are unknown, the get endpoints answer HTTP 404 yet still
+        # return the records they found, with one {"code": 404, "message": "Not
+        # Found", "id": ...} error per missing ID. That partial result is a success
+        # here. A 200 with fewer records than IDs is handled the same way. Any other
+        # error fails the call.
+        status_code = response.get("status_code")
+        body = response.get("body") or {}
+        errors = body.get("errors") or []
+        other_errors = [error for error in errors if not _is_not_found_error(error)]
+        if status_code not in (200, 404) or other_errors or (status_code == 404 and not errors):
+            if status_code is not None and status_code < 300:
+                return _format_error_response(
+                    f"Failed to get {policy_type} policies",
+                    details={"status_code": status_code, "errors": other_errors},
+                    operation=operation,
+                )
+            return handle_api_response(
+                response,
+                operation=operation,
+                error_message=f"Failed to get {policy_type} policies",
+                default_result=[],
+            )
+
+        by_id = {
+            str(policy.get("id")): policy
+            for policy in body.get("resources") or []
+            if isinstance(policy, dict)
+        }
+        return {
+            "found": [by_id[policy_id] for policy_id in wanted if policy_id in by_id],
+            "not_found": [policy_id for policy_id in wanted if policy_id not in by_id],
+        }
+
     # ---- Prevention posture -------------------------------------------------------
 
     def get_prevention_posture(
@@ -822,6 +965,27 @@ class PoliciesModule(BaseModule):
                 operation=self._OPERATIONS[policy_type][op_key],
             )
 
+        if policy_type == "prevention" and isinstance(settings, list):
+            settings = _flatten_prevention_settings(settings)
+            malformed = [
+                entry
+                for entry in settings
+                if not isinstance(entry, dict) or "id" not in entry or "value" not in entry
+            ]
+            if malformed:
+                op_key = "update" if is_update else "create"
+                return _format_error_response(
+                    "Prevention settings must be a flat list of "
+                    '[{"id": "<setting id>", "value": {...}}] entries, for example '
+                    '[{"id": "QuarantineOnWrite", "value": {"enabled": true}}]. '
+                    "Category groups as returned by a policy read are flattened "
+                    f"automatically, but {len(malformed)} entr"
+                    f"{'y lacks' if len(malformed) == 1 else 'ies lack'} an 'id' or "
+                    "'value'. Nothing was sent.",
+                    details={"malformed": malformed[:5]},
+                    operation=self._OPERATIONS[policy_type][op_key],
+                )
+
         resource: dict[str, Any] = {}
         # id is only placed in the body on update (create never carries an id).
         if is_update and policy_id is not None:
@@ -835,7 +999,7 @@ class PoliciesModule(BaseModule):
             and self._CREATE_NEEDS_PLATFORM[policy_type]
             and platform_name is not None
         ):
-            resource["platform_name"] = platform_name
+            resource["platform_name"] = _normalize_platform_name(platform_name)
         if description is not None:
             resource["description"] = description
         if settings is not None:
@@ -862,7 +1026,7 @@ class PoliciesModule(BaseModule):
         ),
         platform_name: str | None = Field(
             default=None,
-            description="Target platform ('Windows', 'Mac', 'Linux'). Must be supplied for all types except content_update (which is platform-agnostic); omitting it for those types returns a guiding error.",
+            description="Target platform ('Windows', 'Mac', 'Linux'; any case). Must be supplied for all types except content_update (which is platform-agnostic); omitting it for those types returns a guiding error.",
         ),
         description: str | None = Field(
             default=None,
@@ -870,7 +1034,7 @@ class PoliciesModule(BaseModule):
         ),
         settings: Any | None = Field(
             default=None,
-            description="Opaque per-type settings object (dict or list), passed through unchanged. Not accepted for firewall policies (the endpoint has no settings field and would ignore it — rejected with an error). Building detailed settings is out of scope for v1 — prefer cloning an existing policy via clone_id then tweaking with falcon_update_policy.",
+            description="Per-type settings object (dict or list), passed through unchanged except for prevention, whose settings list is flattened to [{id, value}] as described on falcon_update_policy. Not accepted for firewall policies (the endpoint has no settings field and would ignore it — rejected with an error). Building detailed settings is out of scope for v1 — prefer cloning an existing policy via clone_id then tweaking with falcon_update_policy.",
         ),
         clone_id: str | None = Field(
             default=None,
@@ -937,7 +1101,7 @@ class PoliciesModule(BaseModule):
         ),
         settings: Any | None = Field(
             default=None,
-            description="Opaque per-type settings object (dict or list), passed through unchanged. Unspecified fields are left unchanged. Not accepted for firewall policies (the endpoint has no settings field and would ignore it — rejected with an error).",
+            description='Per-type settings object (dict or list). Unspecified fields are left unchanged. For prevention, send a flat list of [{"id": "<setting id>", "value": {...}}] (e.g. [{"id": "QuarantineOnWrite", "value": {"enabled": true}}]); the category groups a policy read returns in prevention_settings ([{"name", "settings": [...]}]) are flattened to that shape automatically and extra keys (name, type, description) are dropped. An entry without an id or value is rejected before any API call. Other types pass through unchanged. Not accepted for firewall policies (the endpoint has no settings field and would ignore it — rejected with an error).',
         ),
     ) -> list[dict[str, Any]]:
         """Update an existing host-based policy of the given type.
@@ -993,15 +1157,19 @@ class PoliciesModule(BaseModule):
             default=None,
             description="IDs of the policies to delete. Required (non-empty).",
         ),
+        disable_first: bool = Field(
+            default=False,
+            description="Disable the policies before deleting them. The API refuses to delete an enabled policy. If disabling fails, nothing is deleted.",
+        ),
     ) -> list[dict[str, Any]]:
         """Delete one or more host-based policies of the given type.
 
         Provide the policy_type and a non-empty list of policy `ids`. A policy
-        usually must be DISABLED before it can be deleted — an enabled policy
-        returns an HTTP 400. Disable it first with
-        falcon_perform_policy_action(action_name="disable"); this tool does not
-        auto-disable. The Default policy of each type cannot be deleted. Returns
-        the API response for the deletion.
+        must be DISABLED before it can be deleted — an enabled policy returns an
+        HTTP 400. Set disable_first=true to disable them in the same call, or
+        disable them first with falcon_perform_policy_action(action_name="disable").
+        The Default policy of each type cannot be deleted. Returns the API response
+        for the deletion.
         """
         type_error = self._validate_policy_type(policy_type)
         if type_error is not None:
@@ -1014,6 +1182,21 @@ class PoliciesModule(BaseModule):
                     operation=self._OPERATIONS[policy_type]["delete"],
                 )
             ]
+
+        # Resolve unset Pydantic Field defaults on direct Python calls.
+        if unwrap_field_default(disable_first) is True:
+            disabled = self._base_query_api_call(
+                operation=self._OPERATIONS[policy_type]["action"],
+                query_params={"action_name": "disable"},
+                body_params={"ids": ids},
+                error_message=(
+                    f"Failed to disable {policy_type} policies before deleting them; "
+                    "nothing was deleted"
+                ),
+                default_result=[],
+            )
+            if self._is_error(disabled):
+                return [disabled]
 
         result = self._base_query_api_call(
             operation=self._OPERATIONS[policy_type]["delete"],
@@ -1117,47 +1300,97 @@ class PoliciesModule(BaseModule):
                 "'device_control', 'response', 'content_update'."
             ),
         ),
-        ids: list[str] = Field(
-            description="The COMPLETE ordered list of non-Default policy IDs for the platform, highest precedence first.",
+        ids: list[str] | None = Field(
+            default=None,
+            description="Complete mode: the COMPLETE ordered list of non-Default policy IDs for the platform, highest precedence first. Omit when using move_id.",
         ),
         platform_name: str | None = Field(
             default=None,
-            description="Target platform ('Windows', 'Mac', 'Linux'). Required for all types EXCEPT content_update.",
+            description="Target platform ('Windows', 'Mac', 'Linux'; any case). Required for all types EXCEPT content_update.",
         ),
-    ) -> list[dict[str, Any]]:
+        move_id: str | None = Field(
+            default=None,
+            description="Relative mode: the ID of the one policy to move. Use with place_first or place_after instead of ids; the server builds the complete order.",
+        ),
+        place_first: bool = Field(
+            default=False,
+            description="Relative mode: move move_id to the top (highest precedence).",
+        ),
+        place_after: str | None = Field(
+            default=None,
+            description="Relative mode: the ID of the policy that move_id should come directly after.",
+        ),
+    ) -> list[dict[str, Any]] | dict[str, Any]:
         """Set the precedence (evaluation order) of policies for a platform.
 
-        The `ids` list must be the COMPLETE ordered set of non-Default policies for
-        the given platform — the first id is highest precedence. Partial lists are
-        rejected by the API. platform_name is required for every type except
-        content_update. Returns the API response.
+        Two modes, one per call. Complete mode: `ids` is the COMPLETE ordered set of
+        non-Default policies for the platform, highest precedence first; partial
+        lists are rejected by the API. Relative mode: name the policy to move in
+        `move_id` and either place_first=true or place_after=<policy id>; the server
+        reads the current order, moves that one policy and sends the complete list.
+        platform_name is required for every type except content_update. Returns the
+        API response; relative mode returns `{"result": ..., "ids_sent": [...]}`.
         """
         type_error = self._validate_policy_type(policy_type)
         if type_error is not None:
             return [type_error]
 
-        if not ids:
+        operation = self._OPERATIONS[policy_type]["precedence"]
+        # Resolve unset Pydantic Field defaults on direct Python calls.
+        ids = unwrap_field_default(ids)
+        platform_name = unwrap_field_default(platform_name)
+        move_id = unwrap_field_default(move_id)
+        place_first = unwrap_field_default(place_first) is True
+        place_after = unwrap_field_default(place_after)
+        relative = move_id is not None or place_first or place_after is not None
+
+        if relative and ids:
             return [
                 _format_error_response(
-                    "A non-empty 'ids' list is required to set policy precedence.",
-                    operation=self._OPERATIONS[policy_type]["precedence"],
+                    "Use either 'ids' (the complete order) or 'move_id' with "
+                    "place_first/place_after (a relative move), not both.",
+                    operation=operation,
                 )
             ]
 
+        if not relative and not ids:
+            return [
+                _format_error_response(
+                    "A non-empty 'ids' list is required to set policy precedence, or "
+                    "'move_id' with place_first=true or place_after=<policy id>.",
+                    operation=operation,
+                )
+            ]
+
+        platform = _normalize_platform_name(platform_name)
+        needs_platform = self._PRECEDENCE_NEEDS_PLATFORM[policy_type]
+        if needs_platform and not platform:
+            return [
+                _format_error_response(
+                    f"Setting precedence for {policy_type} policies requires a "
+                    "'platform_name'.",
+                    operation=operation,
+                )
+            ]
+
+        if relative:
+            order = self._relative_precedence_order(
+                policy_type,
+                platform if needs_platform else None,
+                move_id,
+                place_first,
+                place_after,
+            )
+            if isinstance(order, dict):
+                return [order]
+            ids = order
+
         body: dict[str, Any] = {"ids": ids}
-        if self._PRECEDENCE_NEEDS_PLATFORM[policy_type]:
-            if not platform_name:
-                return [
-                    _format_error_response(
-                        f"Setting precedence for {policy_type} policies requires a "
-                        "'platform_name'.",
-                        operation=self._OPERATIONS[policy_type]["precedence"],
-                    )
-                ]
-            body["platform_name"] = platform_name
+        if needs_platform:
+            body["platform_name"] = platform
 
         result = self._base_query_api_call(
-            operation=self._OPERATIONS[policy_type]["precedence"],
+            operation=operation,
             body_params=body,
             error_message=f"Failed to set {policy_type} policy precedence",
             default_result=[],
@@ -1166,4 +1399,119 @@ class PoliciesModule(BaseModule):
         if self._is_error(result):
             return [result]
 
+        if relative:
+            return {"result": result, "ids_sent": ids}
         return result
+
+    def _relative_precedence_order(
+        self,
+        policy_type: str,
+        platform: str | None,
+        move_id: str | None,
+        place_first: bool,
+        place_after: str | None,
+    ) -> list[str] | dict[str, Any]:
+        """Build the complete precedence order with one policy moved, or an error dict."""
+        operation = self._OPERATIONS[policy_type]["precedence"]
+        if not move_id:
+            return _format_error_response(
+                "A relative move needs 'move_id', the ID of the policy to move.",
+                operation=operation,
+            )
+        if place_first == (place_after is not None):
+            return _format_error_response(
+                "A relative move needs exactly one of place_first=true or "
+                "place_after=<policy id>.",
+                operation=operation,
+            )
+        if place_after == move_id:
+            return _format_error_response(
+                "place_after must name a different policy than move_id.",
+                operation=operation,
+            )
+
+        current = self._current_precedence_order(policy_type, platform)
+        if isinstance(current, dict):
+            return current
+
+        scope = f"{policy_type} policies for platform '{platform}'" if platform else (
+            f"{policy_type} policies"
+        )
+        if move_id not in current:
+            return _format_error_response(
+                f"Policy '{move_id}' isn't one of the {scope} that can be ordered "
+                "(the Default policy can't be moved).",
+                operation=operation,
+            )
+        order = [policy_id for policy_id in current if policy_id != move_id]
+        if place_first:
+            return [move_id, *order]
+        if place_after not in order:
+            return _format_error_response(
+                f"Policy '{place_after}' isn't one of the {scope} that can be ordered "
+                "(the Default policy always evaluates last).",
+                operation=operation,
+            )
+        anchor = order.index(str(place_after))
+        return [*order[: anchor + 1], move_id, *order[anchor + 1 :]]
+
+    def _current_precedence_order(
+        self, policy_type: str, platform: str | None
+    ) -> list[str] | dict[str, Any]:
+        """List the IDs of every non-Default policy of a type, highest precedence first."""
+        operation = self._OPERATIONS[policy_type]["combined"]
+        # Always filter on the platform: an unfiltered prevention listing has been
+        # seen to leave out a few policies while still reporting the full total, and
+        # a precedence list missing any policy is rejected. content_update policies
+        # have no platform, so they are listed without a filter.
+        fql: str | None = None
+        if platform is not None:
+            if "'" in platform or "\\" in platform:
+                return _format_error_response(
+                    f"Invalid platform_name '{platform}'.", operation=operation
+                )
+            fql = f"platform_name:'{platform}'"
+
+        policies: list[dict[str, Any]] = []
+        while True:
+            page = self._base_search_api_call(
+                operation=operation,
+                search_params={
+                    "filter": fql,
+                    "limit": PRECEDENCE_PAGE_SIZE,
+                    "offset": len(policies),
+                    "sort": "precedence.asc",
+                },
+                error_message=f"Failed to list {policy_type} policies to reorder",
+                default_result=[],
+            )
+            if self._is_error(page):
+                return page
+            policies.extend(p for p in page if isinstance(p, dict))
+            if len(page) < PRECEDENCE_PAGE_SIZE:
+                break
+            if len(policies) >= MAX_PRECEDENCE_POLICIES:
+                return _format_error_response(
+                    f"More than {MAX_PRECEDENCE_POLICIES} {policy_type} policies; "
+                    "pass the complete order in 'ids' instead.",
+                    operation=operation,
+                )
+
+        # The listing is requested in precedence order. Records that carry a numeric
+        # precedence are also sorted on it here, so the order doesn't depend on the
+        # API keeping its sort across pages; some types leave the field null, and then
+        # the API's order stands (the sort is stable).
+        if all(isinstance(p.get("precedence"), int) for p in policies):
+            policies.sort(key=lambda p: p["precedence"])
+
+        # The Default policy is recognised by its name, 'platform_default', the same
+        # name the posture summary uses. It always evaluates last and is not part of
+        # the list the precedence endpoints take.
+        order: list[str] = []
+        for policy in policies:
+            policy_id = policy.get("id")
+            if not policy_id or policy.get("name") == DEFAULT_POLICY_NAME:
+                continue
+            order.append(str(policy_id))
+        # Offset paging can repeat a record if the list changes between pages.
+        return list(dict.fromkeys(order))

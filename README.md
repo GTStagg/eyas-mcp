@@ -40,7 +40,7 @@ See the [`docs/`](docs/overview.md) folder for configuration, usage and module r
 | [Firewall Management](docs/modules/firewall.md) | Search and manage firewall rules and rule groups |
 | [Fusion SOAR](docs/modules/fusion.md) | Search Fusion SOAR workflow definitions and executions, list workflow triggers, read execution results, and run on-demand workflows |
 | [Guardian](docs/modules/guardian.md) | Monitor AI agent activity, sessions, tool and skill usage, and inventory; fetch records by ID; and rank tool and skill calls across the fleet |
-| [Host Groups](docs/modules/host-groups.md) | Search, create, update, and delete host groups; manage group membership; list the groups a single host belongs to, optionally verified against each group |
+| [Host Groups](docs/modules/host-groups.md) | Search, get by ID, create, update, and delete host groups; add or remove hosts in static groups by device ID; list the groups a single host belongs to, optionally verified against each group |
 | [Hosts](docs/modules/hosts.md) | Search and query hosts/devices, manage grouping tags, and contain or lift containment |
 | [Hunting](docs/modules/hunting.md) | Search and read CrowdStrike's published hunting guides and hunting queries, with optional SPL translations |
 | [Identity Protection](docs/modules/idp.md) | Entity investigation, highest-risk identities, user-to-endpoint login history, host-to-identity correlation, Identity Protection sensors, and policy rules |
@@ -48,7 +48,7 @@ See the [`docs/`](docs/overview.md) folder for configuration, usage and module r
 | [IOC](docs/modules/ioc.md) | Search, create, and remove custom indicators of compromise |
 | [MalQuery](docs/modules/malquery.md) | Search CrowdStrike's malware corpus by hash or byte pattern and check quota usage |
 | [NGSIEM](docs/modules/ngsiem.md) | Execute CQL queries against Next-Gen SIEM with an optional CQL pre-flight check and time and row limits, rebuild a host's process tree, look up CQL functions, and inspect data connections, parsers, and lookup files |
-| [Policies](docs/modules/policies.md) | Search, create, update, and delete prevention, sensor update, firewall, device control, response, and content update policies; manage host-group assignment, enable/disable, and precedence; report a host's prevention posture |
+| [Policies](docs/modules/policies.md) | Search, get by ID, create, update, and delete prevention, sensor update, firewall, device control, response, and content update policies; manage host-group assignment, enable/disable, and precedence; report a host's prevention posture |
 | [Quarantine](docs/modules/quarantine.md) | Search quarantine records, preview action counts, and release, unrelease, or delete quarantined files |
 | [Real Time Response](docs/modules/rtr.md) | Audit and summarize RTR sessions, run read-only triage on one or many hosts, wait until hosts are ready (optionally proven by a test script), run CrowdStrike-published Falcon scripts, and manage and run a custom RTR script library |
 | [Recon](docs/modules/recon.md) | Search and aggregate Falcon Intelligence Recon notifications (recon alerts), monitoring rules, and exposed-data records for dark web, leaked credentials, and typosquatting, and preview prospective rule noise |

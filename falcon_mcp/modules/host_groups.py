@@ -16,7 +16,7 @@ from mcp.server.fastmcp.resources import TextResource
 from mcp.types import ToolAnnotations
 from pydantic import AnyUrl, Field
 
-from falcon_mcp.common.errors import _format_error_response
+from falcon_mcp.common.errors import _format_error_response, handle_api_response
 from falcon_mcp.common.logging import get_logger
 from falcon_mcp.modules.base import BaseModule
 from falcon_mcp.resources.host_groups import SEARCH_HOST_GROUPS_FQL_DOCUMENTATION
@@ -32,6 +32,13 @@ GROUP_DETAILS_BATCH = 100
 # device_id is written into a quoted FQL value, so only a real AID is accepted.
 DEVICE_ID_PATTERN = re.compile(r"[0-9a-fA-F]{32}")
 STATIC_GROUP_FILTER = "group_type:'static',group_type:'staticByID'"
+# Host group IDs share the AID format.
+GROUP_ID_PATTERN = re.compile(r"[0-9a-fA-F]{32}")
+# Most IDs one call accepts, for group lookups and for device_ids in a group action.
+MAX_IDS = 500
+# An exact_name search reads at most this many groups before giving up.
+EXACT_NAME_SCAN_LIMIT = 10_000
+HOST_GROUP_ACTIONS = ("add-hosts", "remove-hosts")
 
 
 class MembershipCheckError(Exception):
@@ -56,6 +63,12 @@ class HostGroupsModule(BaseModule):
             server=server,
             method=self.search_host_groups,
             name="search_host_groups",
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.get_host_groups,
+            name="get_host_groups",
         )
 
         self._add_tool(
@@ -180,6 +193,17 @@ class HostGroupsModule(BaseModule):
             """).strip(),
             examples={"name.asc", "created_timestamp.desc"},
         ),
+        exact_name: str | None = Field(
+            default=None,
+            description=(
+                "Return only groups whose name equals this value exactly "
+                "(case-sensitive). Use this instead of a `name:'...'` filter: FQL name "
+                "matching is unreliable for names containing spaces or hyphens and can "
+                "miss the group or return near matches. Combines with `filter`; "
+                "`limit` and `offset` then apply to the exact matches."
+            ),
+            examples={"Production Servers"},
+        ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """Search for host groups in your CrowdStrike environment.
 
@@ -189,6 +213,15 @@ class HostGroupsModule(BaseModule):
         and audit metadata in a single call.
         Responses include `pagination.total` (the total number of records matching the filter, or null when the API does not report a count) — use it to answer "how many" questions.
         """
+        if isinstance(exact_name, str) and exact_name:
+            return self._search_host_groups_exact_name(
+                exact_name,
+                filter if isinstance(filter, str) else None,
+                limit if isinstance(limit, int) else 100,
+                offset if isinstance(offset, int) else 0,
+                sort if isinstance(sort, str) else "name.asc",
+            )
+
         host_groups, pagination = self._base_search_with_meta(
             operation="queryCombinedHostGroups",
             search_params={
@@ -206,6 +239,154 @@ class HostGroupsModule(BaseModule):
             )
 
         return self._build_pagination_envelope(host_groups or [], pagination, filter)
+
+    def _search_host_groups_exact_name(
+        self,
+        exact_name: str,
+        group_filter: str | None,
+        limit: int,
+        offset: int,
+        sort: str,
+    ) -> dict[str, Any]:
+        """Find host groups whose name equals `exact_name`, compared case-sensitively.
+
+        FQL `name:'...'` matching is unreliable for names with spaces or hyphens,
+        and wildcard forms such as `name:*'...'` tokenize the same way, so neither
+        can be trusted to return the group or only the group. Instead this pages
+        through every group that matches the caller's own `filter` (all groups when
+        there is none) and compares names in Python. Tenants rarely have more than a
+        few hundred groups; past EXACT_NAME_SCAN_LIMIT the call fails rather than
+        answer from a partial scan.
+        """
+        matches: list[dict[str, Any]] = []
+        scanned = 0
+        while True:
+            page, pagination = self._base_search_with_meta(
+                operation="queryCombinedHostGroups",
+                search_params={
+                    "filter": group_filter,
+                    "limit": GROUP_PAGE_SIZE,
+                    "offset": scanned,
+                    "sort": sort,
+                },
+                error_message="Failed to search host groups",
+            )
+            if self._is_error(page):
+                return self._format_fql_error_response(
+                    [page], group_filter, SEARCH_HOST_GROUPS_FQL_DOCUMENTATION
+                )
+            records = [r for r in page or [] if isinstance(r, dict)]
+            matches.extend(r for r in records if r.get("name") == exact_name)
+            scanned += len(records)
+            total = (pagination or {}).get("total")
+            if not records or len(records) < GROUP_PAGE_SIZE or (isinstance(total, int) and scanned >= total):
+                break
+            if scanned >= EXACT_NAME_SCAN_LIMIT:
+                return _format_error_response(
+                    f"Stopped after reading {scanned} host groups without finishing the "
+                    "exact-name search. Add a `filter` (for example on group_type) to "
+                    "narrow it.",
+                    operation="queryCombinedHostGroups",
+                )
+
+        envelope = self._build_pagination_envelope(
+            matches[offset : offset + limit],
+            {"total": len(matches), "offset": offset, "limit": limit},
+            group_filter,
+        )
+        envelope["exact_name"] = exact_name
+        return envelope
+
+    def get_host_groups(
+        self,
+        ids: list[str] = Field(
+            description=(
+                "Host group IDs (32 hex characters) to look up, at most 500. If you "
+                "don't already have them, use falcon_search_host_groups to find them."
+            ),
+        ),
+    ) -> dict[str, Any]:
+        """Get host groups by ID and report which IDs don't exist.
+
+        Use this to confirm a host group still exists and to read its name,
+        group_type (static, staticByID or dynamic), assignment_rule, description and
+        audit fields before acting on it. Returns `found` (records in the order of
+        `ids`) and `not_found` (IDs with no host group).
+        """
+        checked = self._validate_group_ids(ids)
+        if isinstance(checked, dict):
+            return checked
+        result = self._lookup_host_groups(checked)
+        if isinstance(result, dict):
+            return result
+        found, not_found = result
+        return {"found": found, "not_found": not_found}
+
+    @staticmethod
+    def _validate_group_ids(ids: Any) -> list[str] | dict[str, Any]:
+        """Return the de-duplicated group IDs, or an error response."""
+        if not isinstance(ids, list) or not ids:
+            return _format_error_response(
+                "`ids` must list at least one host group ID.",
+                operation="getHostGroups",
+            )
+        unique = list(dict.fromkeys(str(i).strip() for i in ids))
+        bad = [i for i in unique if not GROUP_ID_PATTERN.fullmatch(i)]
+        if bad:
+            return _format_error_response(
+                "These are not host group IDs (expected 32 hex characters): "
+                f"{', '.join(bad[:10])}",
+                operation="getHostGroups",
+            )
+        if len(unique) > MAX_IDS:
+            return _format_error_response(
+                f"At most {MAX_IDS} host group IDs can be given at once; got {len(unique)}.",
+                operation="getHostGroups",
+            )
+        return unique
+
+    def _lookup_host_groups(
+        self, ids: list[str]
+    ) -> tuple[list[dict[str, Any]], list[str]] | dict[str, Any]:
+        """Look up host groups by ID, returning (found, not_found) or an error response.
+
+        getHostGroups answers a request that includes unknown IDs with HTTP 404, yet
+        still returns the records it found in `resources`, plus one
+        `{"code": 404, "message": "Not Found", "id": ...}` error per missing ID. The
+        shared response handler treats any 404 as a failure and drops those records,
+        so the raw response is read here. A 404 is only accepted when every error
+        names an ID; anything else stays an error.
+        """
+        records: dict[str, dict[str, Any]] = {}
+        for start in range(0, len(ids), GROUP_DETAILS_BATCH):
+            batch = ids[start : start + GROUP_DETAILS_BATCH]
+            response = self.client.command("getHostGroups", parameters={"ids": batch})
+            status = response.get("status_code")
+            body = response.get("body") or {}
+            errors = body.get("errors") or []
+            per_id_not_found = (
+                status == 404
+                and bool(errors)
+                and all(
+                    isinstance(e, dict) and e.get("code") == 404 and e.get("id")
+                    for e in errors
+                )
+            )
+            if status != 200 and not per_id_not_found:
+                error: dict[str, Any] = handle_api_response(
+                    response,
+                    operation="getHostGroups",
+                    error_message="Failed to get host groups",
+                    default_result=[],
+                )
+                return error
+            for record in body.get("resources") or []:
+                if isinstance(record, dict) and record.get("id"):
+                    records[str(record["id"]).lower()] = record
+
+        found = [records[i.lower()] for i in ids if i.lower() in records]
+        not_found = [i for i in ids if i.lower() not in records]
+        return found, not_found
 
     def search_host_group_members(
         self,
@@ -348,15 +529,14 @@ class HostGroupsModule(BaseModule):
         if not group_ids:
             return response
 
-        groups = self._base_get_by_ids(
-            operation="getHostGroups",
-            ids=group_ids,
-            use_params=True,
-        )
-        if not isinstance(groups, list):
-            return [groups]
+        # A group deleted since the host record was written comes back as a per-ID
+        # 404; _lookup_host_groups keeps the other groups, and the missing ID lands
+        # in unresolved_group_ids below instead of failing the call.
+        lookup = self._lookup_host_groups(list(dict.fromkeys(group_ids)))
+        if isinstance(lookup, dict):
+            return [lookup]
 
-        groups = self._reorder_by_ids(group_ids, groups, id_field="id")
+        groups = self._reorder_by_ids(group_ids, lookup[0], id_field="id")
         response["results"] = groups
         response["count"] = len(groups)
 
@@ -614,28 +794,76 @@ class HostGroupsModule(BaseModule):
 
     def perform_host_group_action(
         self,
-        action_name: str = Field(
+        action_name: Literal["add-hosts", "remove-hosts"] = Field(
             description="The membership action to perform. Either 'add-hosts' or 'remove-hosts'.",
         ),
         ids: list[str] = Field(
-            description="Host group IDs to add hosts to or remove hosts from. If you don't already have them, use falcon_search_host_groups to look them up.",
+            description="Host group IDs to add hosts to or remove hosts from. Each must be a static or staticByID group. If you don't already have them, use falcon_search_host_groups to look them up.",
         ),
-        filter: str = Field(
-            description="Host FQL expression selecting which hosts to add or remove (e.g. \"device_id:['id1','id2']\" or \"platform_name:'Windows'\"). See `falcon://hosts/search/fql-guide` for syntax.",
+        filter: str | None = Field(
+            default=None,
+            description="Host FQL expression selecting which hosts to add or remove. Acts on EVERY host that matches, so prefer `device_ids`. Give exactly one of `filter` or `device_ids`. See `falcon://hosts/search/fql-guide` for syntax.",
+        ),
+        device_ids: list[str] | None = Field(
+            default=None,
+            description="Host device IDs (AIDs, 32 hex characters) to add or remove, at most 500. Preferred over `filter`. Give exactly one of `filter` or `device_ids`.",
         ),
     ) -> list[dict[str, Any]]:
-        """Add or remove hosts from one or more host groups.
+        """Add or remove hosts from one or more static host groups.
 
         Set action_name to 'add-hosts' or 'remove-hosts', provide the target group
-        `ids`, and a host FQL filter selecting which hosts to act on. Applies only to
-        static groups. Returns the updated host group records on success.
+        `ids`, and select hosts with `device_ids` (preferred) or a host FQL `filter`,
+        which acts on every matching host. Every group is looked up first: the call
+        is refused for dynamic groups, whose members come from their assignment rule,
+        and for group IDs that don't exist. Returns the updated host group records.
         """
+        if action_name not in HOST_GROUP_ACTIONS:
+            return [
+                _format_error_response(
+                    f"Unknown action_name {action_name!r}. Use 'add-hosts' or 'remove-hosts'.",
+                    operation="performGroupAction",
+                )
+            ]
+
+        host_filter = self._host_action_filter(filter, device_ids)
+        if isinstance(host_filter, dict):
+            return [host_filter]
+
+        group_ids = self._validate_group_ids(ids)
+        if isinstance(group_ids, dict):
+            return [group_ids]
+
+        lookup = self._lookup_host_groups(group_ids)
+        if isinstance(lookup, dict):
+            return [lookup]
+        groups, not_found = lookup
+        if not_found:
+            return [
+                _format_error_response(
+                    "No change was made. These host group IDs were not found: "
+                    f"{', '.join(not_found)}.",
+                    operation="performGroupAction",
+                )
+            ]
+        dynamic = [g for g in groups if g.get("group_type") == "dynamic"]
+        if dynamic:
+            names = ", ".join(f"{g.get('name')!r} ({g.get('id')})" for g in dynamic)
+            return [
+                _format_error_response(
+                    f"No change was made. These host groups are dynamic: {names}. A "
+                    "dynamic group's members come from its assignment rule, so hosts "
+                    "can't be added or removed by hand. Change the rule with "
+                    "falcon_update_host_group, or use a static group.",
+                    operation="performGroupAction",
+                )
+            ]
+
         result = self._base_query_api_call(
             operation="performGroupAction",
             query_params={"action_name": action_name},
             body_params={
-                "ids": ids,
-                "action_parameters": [{"name": "filter", "value": filter}],
+                "ids": group_ids,
+                "action_parameters": [{"name": "filter", "value": host_filter}],
             },
             error_message="Failed to perform host group action",
             default_result=[],
@@ -645,3 +873,35 @@ class HostGroupsModule(BaseModule):
             return [result]
 
         return result
+
+    @staticmethod
+    def _host_action_filter(filter: Any, device_ids: Any) -> str | dict[str, Any]:
+        """Return the host FQL for a group action, or an error response.
+
+        Exactly one of `filter` and `device_ids` must be given. Device IDs are
+        checked against DEVICE_ID_PATTERN before they are written into the FQL.
+        """
+        has_filter = isinstance(filter, str) and bool(filter.strip())
+        has_ids = isinstance(device_ids, list) and bool(device_ids)
+        if has_filter == has_ids:
+            return _format_error_response(
+                "Give exactly one of `device_ids` (preferred) or `filter` to select hosts.",
+                operation="performGroupAction",
+            )
+        if has_filter:
+            return str(filter)
+
+        unique = list(dict.fromkeys(str(d).strip().lower() for d in device_ids))
+        bad = [d for d in unique if not DEVICE_ID_PATTERN.fullmatch(d)]
+        if bad:
+            return _format_error_response(
+                "These are not host device IDs (expected 32 hex characters): "
+                f"{', '.join(bad[:10])}",
+                operation="performGroupAction",
+            )
+        if len(unique) > MAX_IDS:
+            return _format_error_response(
+                f"At most {MAX_IDS} device IDs can be given at once; got {len(unique)}.",
+                operation="performGroupAction",
+            )
+        return "device_id:[" + ",".join(f"'{d}'" for d in unique) + "]"

@@ -135,6 +135,14 @@ property_name:[operator]'value'
 • Relative dates use lowercase quoted syntax: 'now-7d', 'now-30d'
 • Combine conditions with + (AND) or , (OR)
 
+=== MATCHING A GROUP BY ITS EXACT NAME ===
+FQL name matching is unreliable for names that contain spaces or hyphens:
+name:'Production Servers' can miss the group or also return near matches.
+To find one group by name, pass its name to the `exact_name` parameter of
+falcon_search_host_groups instead of filtering on name. That compares names
+exactly (case-sensitive) and can still be combined with a `filter` on other
+fields, such as group_type.
+
 === NOTE ON MEMBER SEARCH ===
 The falcon_search_host_group_members tool filters on HOST (device) attributes,
 not host group attributes. Consult falcon://hosts/search/fql-guide for the
