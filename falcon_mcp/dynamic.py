@@ -385,12 +385,14 @@ class DynamicToolCatalog:
         # where the hits landed. When both still tie — a bare noun matches a read-only
         # tool and its destructive sibling identically (search_iocs vs remove_iocs) —
         # read-only wins, so ordering never steers an agent to the mutator first. Only
-        # then do ties break toward the least-qualified name and finally
+        # then do ties break toward the least-qualified name, then toward the tool
+        # with fewer required parameters (search_host_groups needs nothing, while
+        # get_host_groups needs IDs the caller may not have yet), and finally
         # alphabetically, since catalog insertion order follows a set of module names
         # and is not stable across processes.
         full_names = {e.tool.name for e in full}
 
-        def sort_key(e: ToolEntry) -> tuple[int, int, int, int, bool, str]:
+        def sort_key(e: ToolEntry) -> tuple[int, int, int, int, bool, int, str]:
             matched, strength = e.score(tokens, query_key)
             annotations = e.tool.annotations
             read_only = annotations.readOnlyHint if annotations else True
@@ -400,6 +402,7 @@ class DynamicToolCatalog:
                 -strength,
                 len(e.name_words),
                 not read_only,
+                len(e.tool.parameters.get("required") or []),
                 e.tool.name,
             )
 

@@ -12,6 +12,27 @@ from falcon_mcp.modules.base import READ_ONLY_ANNOTATIONS
 from falcon_mcp.modules.host_groups import HostGroupsModule
 from tests.modules.utils.test_modules import TestModules
 
+AID = "a" * 32
+GROUP_A = "1" * 32
+GROUP_B = "2" * 32
+
+
+def _group(group_id, group_type, name=None):
+    return {"id": group_id, "name": name or f"Group {group_id[:4]}", "group_type": group_type}
+
+
+def _groups_response(records, missing=()):
+    """A getHostGroups response; missing IDs turn it into the per-ID 404 the API sends."""
+    if not missing:
+        return {"status_code": 200, "body": {"resources": records, "errors": []}}
+    return {
+        "status_code": 404,
+        "body": {
+            "resources": records,
+            "errors": [{"code": 404, "message": "Not Found", "id": i} for i in missing],
+        },
+    }
+
 
 class TestHostGroupsModule(TestModules):
     """Test cases for the Host Groups module."""
@@ -24,6 +45,7 @@ class TestHostGroupsModule(TestModules):
         """Test registering tools with the server."""
         expected_tools = [
             "falcon_search_host_groups",
+            "falcon_get_host_groups",
             "falcon_search_host_group_members",
             "falcon_get_host_group_membership",
             "falcon_create_host_group",
@@ -254,46 +276,374 @@ class TestHostGroupsModule(TestModules):
         self.mock_client.command.assert_not_called()
 
     def test_perform_host_group_action_add_hosts(self):
-        """Test adding hosts to a group sends action_name and body correctly."""
-        self.mock_client.command.return_value = {
-            "status_code": 200,
-            "body": {"resources": [{"id": "group-1"}]},
-        }
+        """Adding hosts looks up the groups, then sends action_name and body."""
+        self.mock_client.command.side_effect = [
+            _groups_response([_group(GROUP_A, "static")]),
+            {"status_code": 200, "body": {"resources": [{"id": GROUP_A}]}},
+        ]
 
         result = self.module.perform_host_group_action(
             action_name="add-hosts",
-            ids=["group-1"],
+            ids=[GROUP_A],
             filter="platform_name:'Windows'",
         )
 
-        self.mock_client.command.assert_called_once_with(
+        self.assertEqual(self.mock_client.command.call_count, 2)
+        self.assertEqual(
+            self.mock_client.command.call_args_list[0][0][0], "getHostGroups"
+        )
+        self.mock_client.command.assert_called_with(
             "performGroupAction",
             parameters={"action_name": "add-hosts"},
             body={
-                "ids": ["group-1"],
+                "ids": [GROUP_A],
                 "action_parameters": [
                     {"name": "filter", "value": "platform_name:'Windows'"}
                 ],
             },
         )
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["id"], "group-1")
+        self.assertEqual(result[0]["id"], GROUP_A)
 
     def test_perform_host_group_action_remove_hosts(self):
-        """Test removing hosts from a group passes remove-hosts action."""
-        self.mock_client.command.return_value = {
-            "status_code": 200,
-            "body": {"resources": [{"id": "group-1"}]},
-        }
+        """Removing hosts passes the remove-hosts action."""
+        self.mock_client.command.side_effect = [
+            _groups_response([_group(GROUP_A, "staticByID")]),
+            {"status_code": 200, "body": {"resources": [{"id": GROUP_A}]}},
+        ]
 
         self.module.perform_host_group_action(
             action_name="remove-hosts",
-            ids=["group-1"],
-            filter="device_id:['dev-1']",
+            ids=[GROUP_A],
+            device_ids=[AID],
         )
 
         call_args = self.mock_client.command.call_args
+        self.assertEqual(call_args[0][0], "performGroupAction")
         self.assertEqual(call_args[1]["parameters"]["action_name"], "remove-hosts")
+
+    def test_perform_host_group_action_builds_fql_from_device_ids(self):
+        """device_ids are de-duplicated, lowercased and written as a device_id list."""
+        self.mock_client.command.side_effect = [
+            _groups_response([_group(GROUP_A, "static")]),
+            {"status_code": 200, "body": {"resources": [{"id": GROUP_A}]}},
+        ]
+        other = "B" * 32
+
+        self.module.perform_host_group_action(
+            action_name="add-hosts",
+            ids=[GROUP_A],
+            device_ids=[AID, other, AID, other.lower()],
+        )
+
+        body = self.mock_client.command.call_args[1]["body"]
+        self.assertEqual(
+            body["action_parameters"],
+            [{"name": "filter", "value": f"device_id:['{AID}','{'b' * 32}']"}],
+        )
+
+    def test_perform_host_group_action_rejects_unknown_action(self):
+        """An unknown action_name is refused before any API call."""
+        result = self.module.perform_host_group_action(
+            action_name="delete-hosts", ids=[GROUP_A], device_ids=[AID]
+        )
+
+        self.assertIn("error", result[0])
+        self.assertIn("add-hosts", result[0]["error"])
+        self.mock_client.command.assert_not_called()
+
+    def test_perform_host_group_action_needs_exactly_one_selector(self):
+        """Giving both filter and device_ids, or neither, is refused."""
+        both = self.module.perform_host_group_action(
+            action_name="add-hosts",
+            ids=[GROUP_A],
+            filter="platform_name:'Windows'",
+            device_ids=[AID],
+        )
+        neither = self.module.perform_host_group_action(
+            action_name="add-hosts", ids=[GROUP_A], filter=None, device_ids=None
+        )
+        empty = self.module.perform_host_group_action(
+            action_name="add-hosts", ids=[GROUP_A], filter="  ", device_ids=[]
+        )
+
+        for result in (both, neither, empty):
+            self.assertIn("exactly one", result[0]["error"])
+        self.mock_client.command.assert_not_called()
+
+    def test_perform_host_group_action_rejects_bad_device_ids(self):
+        """A device ID that isn't 32 hex characters never reaches the FQL."""
+        result = self.module.perform_host_group_action(
+            action_name="add-hosts",
+            ids=[GROUP_A],
+            device_ids=[AID, "abc','*"],
+        )
+
+        self.assertIn("not host device IDs", result[0]["error"])
+        self.mock_client.command.assert_not_called()
+
+    def test_perform_host_group_action_caps_device_ids(self):
+        """More than 500 distinct device IDs is refused."""
+        device_ids = [f"{n:032x}" for n in range(501)]
+
+        result = self.module.perform_host_group_action(
+            action_name="add-hosts", ids=[GROUP_A], device_ids=device_ids
+        )
+
+        self.assertIn("At most 500", result[0]["error"])
+        self.mock_client.command.assert_not_called()
+
+    def test_perform_host_group_action_allows_500_device_ids(self):
+        """Exactly 500 device IDs is accepted."""
+        self.mock_client.command.side_effect = [
+            _groups_response([_group(GROUP_A, "static")]),
+            {"status_code": 200, "body": {"resources": [{"id": GROUP_A}]}},
+        ]
+        device_ids = [f"{n:032x}" for n in range(500)]
+
+        self.module.perform_host_group_action(
+            action_name="add-hosts", ids=[GROUP_A], device_ids=device_ids
+        )
+
+        self.assertEqual(self.mock_client.command.call_args[0][0], "performGroupAction")
+
+    def test_perform_host_group_action_rejects_bad_group_ids(self):
+        """A group ID that isn't 32 hex characters is refused before any API call."""
+        result = self.module.perform_host_group_action(
+            action_name="add-hosts", ids=["group-1"], device_ids=[AID]
+        )
+
+        self.assertIn("not host group IDs", result[0]["error"])
+        self.mock_client.command.assert_not_called()
+
+    def test_perform_host_group_action_refuses_dynamic_groups(self):
+        """A dynamic target group refuses the whole call, naming the group."""
+        self.mock_client.command.return_value = _groups_response(
+            [_group(GROUP_A, "static"), _group(GROUP_B, "dynamic", name="All Windows")]
+        )
+
+        result = self.module.perform_host_group_action(
+            action_name="add-hosts", ids=[GROUP_A, GROUP_B], device_ids=[AID]
+        )
+
+        self.assertIn("dynamic", result[0]["error"])
+        self.assertIn("All Windows", result[0]["error"])
+        self.assertIn(GROUP_B, result[0]["error"])
+        self.assertNotIn(GROUP_A, result[0]["error"])
+        self.mock_client.command.assert_called_once()
+        self.assertEqual(self.mock_client.command.call_args[0][0], "getHostGroups")
+
+    def test_perform_host_group_action_refuses_missing_groups(self):
+        """A group ID that doesn't exist refuses the whole call."""
+        self.mock_client.command.return_value = _groups_response(
+            [_group(GROUP_A, "static")], missing=[GROUP_B]
+        )
+
+        result = self.module.perform_host_group_action(
+            action_name="remove-hosts", ids=[GROUP_A, GROUP_B], device_ids=[AID]
+        )
+
+        self.assertIn("not found", result[0]["error"])
+        self.assertIn(GROUP_B, result[0]["error"])
+        self.mock_client.command.assert_called_once()
+
+    def test_perform_host_group_action_lookup_error(self):
+        """A failed group lookup is returned and nothing is changed."""
+        self.mock_client.command.return_value = {
+            "status_code": 403,
+            "body": {"errors": [{"code": 403, "message": "access denied"}]},
+        }
+
+        result = self.module.perform_host_group_action(
+            action_name="add-hosts", ids=[GROUP_A], device_ids=[AID]
+        )
+
+        self.assertIn("error", result[0])
+        self.mock_client.command.assert_called_once()
+
+    # ==========================================
+    # get_host_groups
+    # ==========================================
+
+    def test_get_host_groups_orders_found_like_the_input(self):
+        """found follows the order of ids, whatever order the API used."""
+        self.mock_client.command.return_value = _groups_response(
+            [_group(GROUP_B, "dynamic"), _group(GROUP_A, "static")]
+        )
+
+        result = self.module.get_host_groups(ids=[GROUP_A, GROUP_B, GROUP_A])
+
+        self.assertEqual([g["id"] for g in result["found"]], [GROUP_A, GROUP_B])
+        self.assertEqual(result["not_found"], [])
+        self.mock_client.command.assert_called_once_with(
+            "getHostGroups", parameters={"ids": [GROUP_A, GROUP_B]}
+        )
+
+    def test_get_host_groups_maps_per_id_404_to_not_found(self):
+        """A 404 with one error per missing ID keeps the found records."""
+        self.mock_client.command.return_value = _groups_response(
+            [_group(GROUP_A, "static")], missing=[GROUP_B]
+        )
+
+        result = self.module.get_host_groups(ids=[GROUP_A, GROUP_B])
+
+        self.assertEqual([g["id"] for g in result["found"]], [GROUP_A])
+        self.assertEqual(result["not_found"], [GROUP_B])
+
+    def test_get_host_groups_all_unknown(self):
+        """Only unknown IDs: a 404 with no resources is still an answer."""
+        self.mock_client.command.return_value = _groups_response([], missing=[GROUP_A])
+
+        result = self.module.get_host_groups(ids=[GROUP_A])
+
+        self.assertEqual(result, {"found": [], "not_found": [GROUP_A]})
+
+    def test_get_host_groups_404_without_ids_is_an_error(self):
+        """A 404 whose errors don't name IDs stays an error."""
+        self.mock_client.command.return_value = {
+            "status_code": 404,
+            "body": {"resources": [], "errors": [{"code": 404, "message": "Not Found"}]},
+        }
+
+        result = self.module.get_host_groups(ids=[GROUP_A])
+
+        self.assertIn("error", result)
+
+    def test_get_host_groups_other_errors_stay_errors(self):
+        """403 and 500 responses are errors, not empty answers."""
+        for status in (403, 500):
+            self.mock_client.command.return_value = {
+                "status_code": status,
+                "body": {"errors": [{"code": status, "message": "failed"}]},
+            }
+            result = self.module.get_host_groups(ids=[GROUP_A])
+            self.assertIn("error", result)
+
+    def test_get_host_groups_validates_ids(self):
+        """Empty, malformed or too many IDs are refused before any API call."""
+        empty = self.module.get_host_groups(ids=[])
+        bad = self.module.get_host_groups(ids=["not-an-id"])
+        too_many = self.module.get_host_groups(ids=[f"{n:032x}" for n in range(501)])
+
+        self.assertIn("at least one", empty["error"])
+        self.assertIn("not host group IDs", bad["error"])
+        self.assertIn("At most 500", too_many["error"])
+        self.mock_client.command.assert_not_called()
+
+    def test_get_host_groups_batches_large_requests(self):
+        """IDs are looked up 100 at a time."""
+        ids = [f"{n:032x}" for n in range(150)]
+        self.mock_client.command.side_effect = [
+            _groups_response([_group(i, "static") for i in ids[:100]]),
+            _groups_response([_group(i, "static") for i in ids[100:]]),
+        ]
+
+        result = self.module.get_host_groups(ids=ids)
+
+        self.assertEqual(self.mock_client.command.call_count, 2)
+        self.assertEqual(len(result["found"]), 150)
+        self.assertEqual(result["not_found"], [])
+
+    def test_get_host_groups_is_read_only(self):
+        """The lookup is registered with read-only annotations."""
+        self.module.register_tools(self.mock_server)
+        self.assert_tool_annotations("falcon_get_host_groups", READ_ONLY_ANNOTATIONS)
+
+    # ==========================================
+    # search_host_groups exact_name
+    # ==========================================
+
+    def test_search_host_groups_exact_name_keeps_only_exact_matches(self):
+        """exact_name compares names exactly and case-sensitively."""
+        self.mock_client.command.return_value = {
+            "status_code": 200,
+            "body": {
+                "meta": {"pagination": {"offset": 0, "limit": 500, "total": 4}},
+                "resources": [
+                    {"id": "g1", "name": "Prod - Web Servers"},
+                    {"id": "g2", "name": "Prod - Web Servers (old)"},
+                    {"id": "g3", "name": "prod - web servers"},
+                    {"id": "g4", "name": "Prod Web Servers"},
+                ],
+            },
+        }
+
+        result = self.module.search_host_groups(
+            filter="group_type:'static'", exact_name="Prod - Web Servers"
+        )
+
+        self.assertEqual([g["id"] for g in result["results"]], ["g1"])
+        self.assertEqual(result["pagination"]["total"], 1)
+        self.assertEqual(result["exact_name"], "Prod - Web Servers")
+        params = self.mock_client.command.call_args[1]["parameters"]
+        self.assertEqual(params["filter"], "group_type:'static'")
+        self.assertEqual(params["limit"], 500)
+
+    def test_search_host_groups_exact_name_pages_through_all_groups(self):
+        """Every page is read, so a match on a later page is found."""
+        first = [{"id": f"g{n}", "name": f"Group {n}"} for n in range(500)]
+        self.mock_client.command.side_effect = [
+            {
+                "status_code": 200,
+                "body": {
+                    "meta": {"pagination": {"offset": 0, "limit": 500, "total": 501}},
+                    "resources": first,
+                },
+            },
+            {
+                "status_code": 200,
+                "body": {
+                    "meta": {"pagination": {"offset": 500, "limit": 500, "total": 501}},
+                    "resources": [{"id": "target", "name": "Target Group"}],
+                },
+            },
+        ]
+
+        result = self.module.search_host_groups(filter=None, exact_name="Target Group")
+
+        self.assertEqual(self.mock_client.command.call_count, 2)
+        self.assertEqual(
+            self.mock_client.command.call_args[1]["parameters"]["offset"], 500
+        )
+        self.assertEqual([g["id"] for g in result["results"]], ["target"])
+
+    def test_search_host_groups_exact_name_no_match(self):
+        """No exact match returns an empty result with a zero total."""
+        self.mock_client.command.return_value = {
+            "status_code": 200,
+            "body": {"resources": [{"id": "g1", "name": "Other"}]},
+        }
+
+        result = self.module.search_host_groups(exact_name="Missing")
+
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["pagination"]["total"], 0)
+
+    def test_search_host_groups_exact_name_error(self):
+        """A failed page returns the FQL guide error response."""
+        self.mock_client.command.return_value = {
+            "status_code": 400,
+            "body": {"errors": [{"message": "Invalid filter"}]},
+        }
+
+        result = self.module.search_host_groups(filter="bad", exact_name="X")
+
+        self.assertIn("error", result["results"][0])
+        self.assertIn("fql_guide", result)
+
+    def test_search_host_groups_exact_name_stops_at_scan_limit(self):
+        """A scan that runs past the limit fails instead of answering partially."""
+        page = [{"id": f"g{n}", "name": "Other"} for n in range(500)]
+        self.mock_client.command.return_value = {
+            "status_code": 200,
+            "body": {"resources": page},
+        }
+
+        with patch("falcon_mcp.modules.host_groups.EXACT_NAME_SCAN_LIMIT", 1000):
+            result = self.module.search_host_groups(exact_name="X")
+
+        self.assertIn("error", result)
+        self.assertEqual(self.mock_client.command.call_count, 2)
 
     # Security validation tests
 
@@ -463,6 +813,53 @@ class TestHostGroupsModule(TestModules):
         self.assertEqual(result["count"], 1)
         self.assertEqual(result["unresolved_group_ids"], ["gone"])
 
+    def test_get_host_group_membership_deleted_group_404_is_unresolved(self):
+        """A deleted group's per-ID 404 keeps the other groups instead of failing."""
+        self.mock_client.command.side_effect = [
+            {
+                "status_code": 200,
+                "body": {"resources": [{"device_id": AID, "groups": [GROUP_A, GROUP_B]}]},
+            },
+            _groups_response([_group(GROUP_A, "static")], missing=[GROUP_B]),
+        ]
+
+        result = self.module.get_host_group_membership(device_id=AID)
+
+        self.assertNotIsInstance(result, list)
+        self.assertEqual([g["id"] for g in result["results"]], [GROUP_A])
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["unresolved_group_ids"], [GROUP_B])
+
+    def test_get_host_group_membership_all_groups_deleted(self):
+        """When every group on the record is gone, all are reported unresolved."""
+        self.mock_client.command.side_effect = [
+            {
+                "status_code": 200,
+                "body": {"resources": [{"device_id": AID, "groups": [GROUP_A]}]},
+            },
+            _groups_response([], missing=[GROUP_A]),
+        ]
+
+        result = self.module.get_host_group_membership(device_id=AID)
+
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["count"], 0)
+        self.assertEqual(result["unresolved_group_ids"], [GROUP_A])
+
+    def test_get_host_group_membership_404_without_ids_is_an_error(self):
+        """A 404 whose errors don't name group IDs still fails the call."""
+        self.mock_client.command.side_effect = [
+            {
+                "status_code": 200,
+                "body": {"resources": [{"device_id": AID, "groups": [GROUP_A]}]},
+            },
+            {"status_code": 404, "body": {"errors": [{"code": 404, "message": "Not Found"}]}},
+        ]
+
+        result = self.module.get_host_group_membership(device_id=AID)
+
+        self.assertIn("error", result[0])
+
     def test_get_host_group_membership_unknown_device(self):
         """An unknown device ID is an error, not an empty membership."""
         self.mock_client.command.return_value = {"status_code": 200, "body": {"resources": []}}
@@ -506,8 +903,6 @@ class TestHostGroupsModule(TestModules):
         self.module.register_tools(self.mock_server)
         self.assert_tool_annotations("falcon_get_host_group_membership", READ_ONLY_ANNOTATIONS)
 
-
-AID = "a" * 32
 
 
 class TestHostGroupMembershipVerify(TestModules):

@@ -1272,6 +1272,143 @@ class TestProcessTree(TestModules):
         self.mock_client.command.assert_not_called()
         self.assertTrue(any("time budget" in note for note in result["notes"]))
 
+    def _fake_clock(self):
+        """Make asyncio.sleep advance time.monotonic, so deadlines pass as polls run."""
+        clock = [1000.0]
+
+        async def _sleep(seconds):
+            clock[0] += seconds
+
+        sleep_patch = patch("falcon_mcp.modules.ngsiem.asyncio.sleep", side_effect=_sleep)
+        clock_patch = patch(
+            "falcon_mcp.modules.ngsiem.time.monotonic", side_effect=lambda: clock[0]
+        )
+        sleep_patch.start()
+        clock_patch.start()
+        self.addCleanup(sleep_patch.stop)
+        self.addCleanup(clock_patch.stop)
+
+    @patch("falcon_mcp.modules.ngsiem.POLL_INTERVAL_SECONDS", 5)
+    def test_time_budget_returns_the_partial_tree(self):
+        self._fake_clock()
+        running = {"status_code": 200, "body": {"done": False, "events": PHISHING_CHAIN}}
+        self.mock_client.command.side_effect = [
+            _started("job-window"),
+            running,
+            running,
+            {"status_code": 204, "body": {}},
+        ]
+
+        result = self._tree(pivot_process_id="30", time_budget_seconds=10)
+
+        self.assertNotIn("error", result)
+        self.assertTrue(result["partial"])
+        self.assertIn("window", result["partial_reason"])
+        self.assertIn("parent_lookup", result["partial_reason"])
+        # The rows the window search found before it was stopped still build a tree.
+        self.assertEqual(result["pivot"]["process_id"], "30")
+        self.assertEqual([n["process_id"] for n in result["ancestry"]], ["20", "10"])
+        self.assertEqual([n["process_id"] for n in result["descendants"]], ["40", "50"])
+        self.assertEqual(result["searches"][0]["status"], "timed_out")
+        self.assertEqual(result["searches"][0]["event_count"], len(PHISHING_CHAIN))
+        self.assertTrue(any("10-second time budget" in note for note in result["notes"]))
+        self.assertTrue(any("Skipped the parent_lookup" in note for note in result["notes"]))
+        self.assertFalse(any("was not found" in note for note in result["notes"]))
+        # Stopped at the budget, not at FALCON_MCP_NGSIEM_TIMEOUT; no second search.
+        last = self.mock_client.command.call_args_list[-1]
+        self.assertEqual(last.kwargs["operation"], "StopSearchV1")
+        self.assertEqual(len(self._start_calls()), 1)
+
+    @patch("falcon_mcp.modules.ngsiem.POLL_INTERVAL_SECONDS", 5)
+    def test_time_budget_clips_a_later_search_to_what_is_left(self):
+        self._fake_clock()
+        running = {"status_code": 200, "body": {"done": False}}
+        self.mock_client.command.side_effect = [
+            _started("job-window"),
+            _done(PHISHING_CHAIN),  # done after 5 of the 20 seconds
+            _started("job-parent"),
+            running,
+            running,
+            running,
+            {"status_code": 204, "body": {}},
+        ]
+
+        result = self._tree(pivot_process_id="30", time_budget_seconds=20)
+
+        polls = [
+            call
+            for call in self.mock_client.command.call_args_list
+            if call.kwargs.get("operation") == "GetSearchStatusV1"
+            and call.kwargs.get("search_id") == "job-parent"
+        ]
+        # 15 seconds were left for the parent lookup: three 5-second polls.
+        self.assertEqual(len(polls), 3)
+        self.assertTrue(result["partial"])
+        self.assertEqual(result["unresolved_parent_process_id"], "1")
+        self.assertEqual([s["status"] for s in result["searches"]], ["completed", "timed_out"])
+        self.assertFalse(any("was not found" in note for note in result["notes"]))
+
+    @patch("falcon_mcp.modules.ngsiem.POLL_INTERVAL_SECONDS", 5)
+    def test_time_budget_cut_probe_is_not_reported_as_missing(self):
+        self._fake_clock()
+        running = {"status_code": 200, "body": {"done": False}}
+        self.mock_client.command.side_effect = [
+            _started("job-window"),
+            _done([_pr2("70", "71", "svchost.exe", T0)]),
+            _started("job-probe"),
+            running,
+            {"status_code": 204, "body": {}},
+        ]
+
+        result = self._tree(pivot_process_id="30", time_budget_seconds=10)
+
+        self.assertIsNone(result["pivot"])
+        self.assertTrue(result["partial"])
+        self.assertIn("anchor_probe", result["partial_reason"])
+        self.assertFalse(any("7 days" in note for note in result["notes"]))
+
+    def test_time_budget_not_reached_is_not_partial(self):
+        self.mock_client.command.side_effect = [
+            _started("job-window"),
+            _done(PHISHING_CHAIN),
+            _started("job-parent"),
+            _done([]),
+        ]
+
+        result = self._tree(pivot_process_id="30", time_budget_seconds=45)
+
+        self.assertFalse(result["partial"])
+        self.assertNotIn("partial_reason", result)
+        self.assertEqual(result["pivot"]["process_id"], "30")
+
+    def test_without_time_budget_there_is_no_partial_key(self):
+        self.mock_client.command.side_effect = [
+            _started("job"),
+            _done(PHISHING_CHAIN),
+            _started("job-parent"),
+            _done([]),
+        ]
+        result = self._tree(pivot_image="powershell.exe")
+        self.assertNotIn("partial", result)
+        self.assertNotIn("partial_reason", result)
+
+    def test_time_budget_error_is_returned_unchanged(self):
+        self.mock_client.command.return_value = {
+            "status_code": 403,
+            "body": {"errors": [{"message": "Forbidden"}]},
+        }
+        result = self._tree(pivot_process_id="30", time_budget_seconds=45)
+        self.assertIn("error", result)
+        self.assertNotIn("partial", result)
+
+    def test_invalid_time_budget_is_rejected_before_any_search(self):
+        for value in (9, 291, True, "45", 45.5):
+            with self.subTest(value=value):
+                result = self._tree(pivot_process_id="30", time_budget_seconds=value)
+                self.assertIn("error", result)
+                self.assertIn("time_budget_seconds", result["error"])
+                self.mock_client.command.assert_not_called()
+
     def test_unsafe_arguments_are_rejected_before_any_search(self):
         hostile = ['"', "\\", "\n", "|", "'", '" | head(1) | "', "\r"]
         cases = []
@@ -1333,7 +1470,8 @@ class TestProcessRollupQuery(unittest.TestCase):
             f'#event_simpleName=ProcessRollup2 aid="{AID}" TargetProcessId="123"\n'
             "| select([@timestamp, aid, TargetProcessId, ParentProcessId, ContextProcessId, "
             "RawProcessId, ImageFileName, FileName, CommandLine, UserName, UserSid, "
-            "SHA256HashData, ProcessStartTime])\n"
+            "SHA256HashData, ProcessStartTime, FileSignInfo, SignInfoFlags, SigningId, "
+            "CodeSigningFlags])\n"
             "| sort(@timestamp, order=asc, limit=5)",
         )
 
@@ -1586,6 +1724,65 @@ class TestSearchNgsiemBounded(TestModules):
         self.assertEqual(result["cql"], "event_simpleName=ProcessRollup2 | sort(_count)")
         self.assertEqual(result["fix"], "#event_simpleName=ProcessRollup2 | sort(_count, limit=1000)")
 
+    def test_check_cql_unknown_function_warns_but_still_searches(self):
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"id": "job-1"}},
+            {"status_code": 200, "body": {"done": True, "events": [{"a": 1}]}},
+        ]
+        with patch("falcon_mcp.modules.ngsiem.asyncio.sleep", new_callable=AsyncMock):
+            result = self._search(
+                query_string="#event_simpleName=ProcessRollup2 | hed(5)",
+                hours_back=1,
+                check_cql=True,
+            )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["results"], [{"a": 1}])
+        self.assertEqual([w["match"] for w in result["cql_warnings"]], ["hed("])
+        self.assertIn("head", result["cql_warnings"][0]["suggestions"])
+
+    def test_check_cql_clean_query_has_no_warnings(self):
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"id": "job-1"}},
+            {"status_code": 200, "body": {"done": True, "events": []}},
+        ]
+        with patch("falcon_mcp.modules.ngsiem.asyncio.sleep", new_callable=AsyncMock):
+            result = self._search(
+                query_string=(
+                    "#event_simpleName=ProcessRollup2 | groupBy([ComputerName], "
+                    "function=count(as=cnt)) | sort(cnt, order=desc, limit=5)"
+                ),
+                hours_back=1,
+                check_cql=True,
+            )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["cql_warnings"], [])
+
+    def test_check_cql_error_blocks_and_lists_warnings_too(self):
+        result = self._search(
+            query_string="event_simpleName=ProcessRollup2 | hed(5)",
+            hours_back=1,
+            check_cql=True,
+        )
+        self.mock_client.command.assert_not_called()
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            [(i["rule"], i["severity"]) for i in result["cql_lint"]],
+            [("missing_tag_prefix", "error"), ("unknown_function", "warning")],
+        )
+
+    def test_check_cql_warnings_accompany_an_api_error(self):
+        self.mock_client.command.return_value = {
+            "status_code": 400,
+            "body": {"errors": [{"message": "Unknown function"}]},
+        }
+        result = self._search(
+            query_string="#event_simpleName=ProcessRollup2 | hed(5)",
+            hours_back=1,
+            check_cql=True,
+        )
+        self.assertIn("error", result)
+        self.assertEqual([w["match"] for w in result["cql_warnings"]], ["hed("])
+
     def test_check_cql_off_by_default(self):
         self.mock_client.command.side_effect = [
             {"status_code": 200, "body": {"id": "job-1"}},
@@ -1691,6 +1888,7 @@ class TestProcessNodeContract(unittest.TestCase):
                     "UserName": "alice",
                     "UserSid": "S-1-5-21-1",
                     "SHA256HashData": "ab" * 32,
+                    "SignInfoFlags": "8683538",
                     "ProcessStartTime": 1_699_999_999.5,
                 }
             )
@@ -1706,6 +1904,7 @@ class TestProcessNodeContract(unittest.TestCase):
                 "user_name": "alice",
                 "user_sid": "S-1-5-21-1",
                 "sha256": "ab" * 32,
+                "signing": {"sign_info_flags": "8683538"},
                 "process_start_time": "2023-11-14T22:13:19.500000Z",
                 "timestamp": "2023-11-14T22:13:20Z",
             },
@@ -1719,11 +1918,37 @@ class TestProcessNodeContract(unittest.TestCase):
             set(node),
             {
                 "process_id", "parent_process_id", "os_pid", "image", "command_line",
-                "user_name", "user_sid", "sha256", "process_start_time", "timestamp",
+                "user_name", "user_sid", "sha256", "signing", "process_start_time",
+                "timestamp",
             },
         )
         self.assertIsNone(node["parent_process_id"])
         self.assertIsNone(node["timestamp"])
+        self.assertIsNone(node["signing"])
+
+    def test_signing_holds_only_the_raw_fields_present(self):
+        from falcon_mcp.modules.ngsiem import _process_node
+
+        cases = [
+            # macOS
+            (
+                {"SigningId": "com.apple.ps", "CodeSigningFlags": "570495761"},
+                {"signing_id": "com.apple.ps", "code_signing_flags": "570495761"},
+            ),
+            # Windows, with numbers as well as strings
+            ({"SignInfoFlags": 8683538}, {"sign_info_flags": "8683538"}),
+            # A tenant that fills FileSignInfo
+            (
+                {"FileSignInfo": "signed", "SignInfoFlags": "1"},
+                {"file_sign_info": "signed", "sign_info_flags": "1"},
+            ),
+            # Linux: none of them; empty strings count as absent
+            ({"SigningId": ""}, None),
+        ]
+        for extra, expected in cases:
+            with self.subTest(extra=extra):
+                node = _process_node({"TargetProcessId": "1", **extra})
+                self.assertEqual(node["signing"], expected)
 
 
 if __name__ == "__main__":

@@ -119,7 +119,10 @@ processes down for `descendants`. When the pivot started long before
 `pivot_time`, as with behavioural detections, it looks the process up over the
 previous 7 days and re-centres the window on its start. A missing parent gets
 one lookup over the same 7 days. At most 4 searches run, within
-FALCON_MCP_NGSIEM_TIMEOUT seconds in total. `delivery_vector` is a heuristic
+FALCON_MCP_NGSIEM_TIMEOUT seconds in total, or within `time_budget_seconds`,
+after which the tree found so far comes back with `partial` set. Each node's
+`signing` holds the raw sensor signing fields for its platform, if any.
+`delivery_vector` is a heuristic
 suggestion of how the chain started (for example `phishing_doc`,
 `browser_drive_by`, `lateral_winrm`), based only on image names and command
 lines. `searches` lists each query run and `notes` explains any gap.

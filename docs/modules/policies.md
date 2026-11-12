@@ -44,6 +44,22 @@ Responses include `pagination.total` (the total number of records matching the f
 - "Show enabled sensor update policies for Windows"
 - "Find prevention policies whose name contains 'default'"
 
+### `falcon_get_policies`
+
+**Required scopes:** `Content Update Policies:read`, `Device Control Policies:read`, `Firewall Management:read`, `Prevention Policies:read`, `Response Policies:read`, `Sensor Update Policies:read`
+
+Get full host-based policy records by policy ID.
+
+Use this when you already have policy IDs (for example from a host's
+device_policies or an earlier search) and need the complete record: name,
+platform_name, enabled, settings (prevention_settings for prevention) and
+host groups. Returns `found` (the records, in the order of `ids`) and
+`not_found` (the IDs the tenant has no policy of that type for). Read-only.
+
+**Example prompts:**
+
+- "Show the full settings of prevention policy 1a2b3c"
+
 ### `falcon_search_policy_members`
 
 **Required scopes:** `Content Update Policies:read`, `Device Control Policies:read`, `Firewall Management:read`, `Prevention Policies:read`, `Response Policies:read`, `Sensor Update Policies:read`
@@ -133,11 +149,11 @@ the updated policy record.
 Delete one or more host-based policies of the given type.
 
 Provide the policy_type and a non-empty list of policy `ids`. A policy
-usually must be DISABLED before it can be deleted — an enabled policy
-returns an HTTP 400. Disable it first with
-falcon_perform_policy_action(action_name="disable"); this tool does not
-auto-disable. The Default policy of each type cannot be deleted. Returns
-the API response for the deletion.
+must be DISABLED before it can be deleted — an enabled policy returns an
+HTTP 400. Set disable_first=true to disable them in the same call, or
+disable them first with falcon_perform_policy_action(action_name="disable").
+The Default policy of each type cannot be deleted. Returns the API response
+for the deletion.
 
 **Example prompts:**
 
@@ -169,18 +185,22 @@ records.
 > [!CAUTION]
 > This tool performs destructive operations.
 
-**Required scopes:** `Content Update Policies:write`, `Device Control Policies:write`, `Firewall Management:write`, `Prevention Policies:write`, `Response Policies:write`, `Sensor Update Policies:write`
+**Required scopes:** `Content Update Policies:read`, `Device Control Policies:read`, `Firewall Management:read`, `Prevention Policies:read`, `Response Policies:read`, `Sensor Update Policies:read`, `Content Update Policies:write`, `Device Control Policies:write`, `Firewall Management:write`, `Prevention Policies:write`, `Response Policies:write`, `Sensor Update Policies:write`
 
 Set the precedence (evaluation order) of policies for a platform.
 
-The `ids` list must be the COMPLETE ordered set of non-Default policies for
-the given platform — the first id is highest precedence. Partial lists are
-rejected by the API. platform_name is required for every type except
-content_update. Returns the API response.
+Two modes, one per call. Complete mode: `ids` is the COMPLETE ordered set of
+non-Default policies for the platform, highest precedence first; partial
+lists are rejected by the API. Relative mode: name the policy to move in
+`move_id` and either place_first=true or place_after=<policy id>; the server
+reads the current order, moves that one policy and sends the complete list.
+platform_name is required for every type except content_update. Returns the
+API response; relative mode returns `{"result": ..., "ids_sent": [...]}`.
 
 **Example prompts:**
 
 - "Set the precedence order of these Windows prevention policies: 1a2b3c, 4d5e6f, 7g8h9i"
+- "Move Windows prevention policy 1a2b3c to the top of the precedence order"
 
 ## Resources
 
