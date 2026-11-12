@@ -154,7 +154,7 @@ class FusionModule(BaseModule):
                 "FQL filter expression. See `falcon://fusion/workflow-definitions/fql-guide` "
                 "for syntax. Match a workflow by name with `name.raw`, not `name`."
             ),
-            examples={"enabled:true+trigger.type:'On demand'", "name.raw:*'*Exposure*'"},
+            examples=["enabled:true+trigger.type:'On demand'", "name.raw:*'*Exposure*'"],
         ),
         limit: int = Field(
             default=10,
@@ -185,7 +185,7 @@ class FusionModule(BaseModule):
 
                 Examples: 'last_modified_timestamp.desc', 'name.asc'
             """).strip(),
-            examples={"last_modified_timestamp.desc", "name.asc"},
+            examples=["last_modified_timestamp.desc", "name.asc"],
         ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """Search Fusion SOAR workflow definitions in your CrowdStrike environment.
@@ -231,7 +231,7 @@ class FusionModule(BaseModule):
                 "FQL filter expression. See `falcon://fusion/workflow-executions/fql-guide` "
                 "for syntax. Filter status with `ui_status`, not `status`."
             ),
-            examples={"ui_status:'Completed'", "started_timestamp:>'now-7d'"},
+            examples=["ui_status:'Completed'", "started_timestamp:>'now-7d'"],
         ),
         limit: int = Field(
             default=10,
@@ -269,7 +269,7 @@ class FusionModule(BaseModule):
 
                 Examples: 'started_timestamp.desc', 'completed_timestamp.desc'
             """).strip(),
-            examples={"started_timestamp.desc", "completed_timestamp.desc"},
+            examples=["started_timestamp.desc", "completed_timestamp.desc"],
         ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """Search Fusion SOAR workflow execution history in your CrowdStrike environment.
@@ -325,7 +325,7 @@ class FusionModule(BaseModule):
                 "drops the embedded triggering event, which is usually the largest "
                 "part; do not omit 'activities' if you want the per-activity results."
             ),
-            examples={"trigger"},
+            examples=["trigger"],
         ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """Read what one or more Fusion SOAR workflow executions produced.

@@ -83,7 +83,7 @@ class IOCModule(BaseModule):
         filter: str | None = Field(
             default=None,
             description="FQL filter expression. See `falcon://ioc/search/fql-guide` for syntax.",
-            examples={"type:'domain'+expired:false", "source:'mcp'"},
+            examples=["type:'domain'+expired:false", "source:'mcp'"],
         ),
         limit: int = Field(
             default=10,
@@ -105,7 +105,7 @@ class IOCModule(BaseModule):
                 works here.
                 Examples: 'modified_on.desc', 'severity_number.desc'
             """).strip(),
-            examples={"modified_on.desc", "severity_number.desc"},
+            examples=["modified_on.desc", "severity_number.desc"],
         ),
         after: str | None = Field(
             default=None,

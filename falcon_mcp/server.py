@@ -186,7 +186,10 @@ class FalconMCPServer:
         # sources apart.
         self._dynamic_mode: DynamicMode | None = None
         available_modules = registry.get_available_modules()
-        for module_name in self.loaded_modules:
+        # Sorted so tools/list and resources/list come out in the same order in every
+        # process: set order changes with PYTHONHASHSEED, and a reordered tool list
+        # breaks client prompt caching.
+        for module_name in sorted(self.loaded_modules):
             if module_name in available_modules:
                 module_class = available_modules[module_name]
                 self.modules[module_name] = module_class(self.falcon_client)

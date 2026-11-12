@@ -51,7 +51,7 @@ class _CloudContainersMixin(_CloudBase):
         filter: str | None = Field(
             default=None,
             description="FQL filter expression. See `falcon://cloud/kubernetes-containers/fql-guide` for syntax.",
-            examples={"cloud:'AWS'", "cluster_name:'prod'"},
+            examples=["cloud:'AWS'", "cluster_name:'prod'"],
         ),
         limit: int = Field(
             default=10,
@@ -86,7 +86,7 @@ class _CloudContainersMixin(_CloudBase):
 
                 Examples: 'container_name.desc', 'last_seen.desc'
             """).strip(),
-            examples={"container_name.desc", "last_seen.desc"},
+            examples=["container_name.desc", "last_seen.desc"],
         ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """Search for Kubernetes containers in your CrowdStrike container inventory.
@@ -109,7 +109,7 @@ class _CloudContainersMixin(_CloudBase):
         filter: str | None = Field(
             default=None,
             description="FQL filter expression. See `falcon://cloud/kubernetes-containers/fql-guide` for syntax.",
-            examples={"cloud:'Azure'", "container_name:'service'"},
+            examples=["cloud:'Azure'", "container_name:'service'"],
         ),
     ) -> int:
         """Count Kubernetes containers matching filter criteria.
@@ -136,7 +136,7 @@ class _CloudContainersMixin(_CloudBase):
         filter: str | None = Field(
             default=None,
             description="FQL filter expression. See `falcon://cloud/images-vulnerabilities/fql-guide` for syntax.",
-            examples={"cve_id:*'*2025*'", "cvss_score:>5"},
+            examples=["cve_id:*'*2025*'", "cvss_score:>5"],
         ),
         limit: int = Field(
             default=10,
@@ -165,7 +165,7 @@ class _CloudContainersMixin(_CloudBase):
 
                 Examples: 'cvss_score.desc', 'cps_current_rating.asc'
             """).strip(),
-            examples={"cvss_score.desc", "cps_current_rating.asc"},
+            examples=["cvss_score.desc", "cps_current_rating.asc"],
         ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """Search for container image vulnerabilities in CrowdStrike Image Assessments.

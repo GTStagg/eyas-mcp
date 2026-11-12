@@ -58,7 +58,7 @@ class SensorUsageModule(BaseModule):
         filter: str | None = Field(
             default=None,
             description="FQL filter expression. See `falcon://sensor-usage/weekly/fql-guide` for syntax.",
-            examples={"event_date:'2024-06-11'", "period:'30'"},
+            examples=["event_date:'2024-06-11'", "period:'30'"],
         ),
     ) -> list[dict[str, Any]]:
         """Search for weekly sensor usage data in your CrowdStrike environment.

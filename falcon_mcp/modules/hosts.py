@@ -181,7 +181,7 @@ class HostsModule(BaseModule):
         filter: str | None = Field(
             default=None,
             description="FQL filter expression. See `falcon://hosts/search/fql-guide` for syntax.",
-            examples={"platform_name:'Windows'", "hostname:'PC*'"},
+            examples=["platform_name:'Windows'", "hostname:'PC*'"],
         ),
         limit: int = Field(
             default=10,
@@ -214,7 +214,7 @@ class HostsModule(BaseModule):
 
                 Examples: 'hostname.asc', 'last_seen.desc', 'platform_name.asc'
             """).strip(),
-            examples={"hostname.asc", "last_seen.desc"},
+            examples=["hostname.asc", "last_seen.desc"],
         ),
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """Search hosts and their sensor state: filter by hostname, platform, IP, sensor version, containment (network-quarantine) status, assigned policies, or grouping tags.

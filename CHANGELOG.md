@@ -28,6 +28,7 @@
 * **exclusions:** IOA regexes are checked for the `\B` zero-width assertion too, and ML `excluded_from` values other than `blocking` and `extraction` are rejected before any API call ([#17](https://github.com/GTStagg/eyas-mcp/pull/17))
 * **data security:** `falcon_create_data_security_entity` replaces en and em dashes in `name` and `description` with hyphens, rejects the `global` region before calling the API, and returns full records for entity types whose create call answers with IDs only (previously a list of ID strings) ([#17](https://github.com/GTStagg/eyas-mcp/pull/17))
 * **host groups:** `falcon_search_host_groups` caps `limit` at 500, the largest page size Falcon accepts; larger values used to fail with HTTP 400
+* tool and resource lists, and the `examples` in tool schemas, come out in the same order in every server process, so clients' prompt caches stay valid across restarts
 
 ### Documentation
 
