@@ -55,6 +55,14 @@ class TestHostGroupsModule(TestModules):
         ]
         self.assert_tools_registered(expected_tools)
 
+    def test_search_host_groups_limit_capped_at_api_page_size(self):
+        """The host group endpoints reject page sizes over 500, so the schema stops there."""
+        import inspect
+
+        limit = inspect.signature(self.module.search_host_groups).parameters["limit"].default
+        maxima = [m.le for m in limit.metadata if hasattr(m, "le")]
+        self.assertEqual(maxima, [500])
+
     def test_register_resources(self):
         """Test registering resources with the server."""
         expected_resources = [

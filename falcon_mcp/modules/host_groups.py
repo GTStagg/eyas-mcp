@@ -165,8 +165,10 @@ class HostGroupsModule(BaseModule):
         limit: int = Field(
             default=100,
             ge=1,
-            le=5000,
-            description="The maximum records to return. [1-5000]",
+            # The host group endpoints reject page sizes over 500 with HTTP 400
+            # (checked against a live tenant).
+            le=500,
+            description="The maximum records to return. [1-500] Page with offset for more.",
         ),
         offset: int | None = Field(
             default=None,
