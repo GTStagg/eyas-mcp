@@ -1185,7 +1185,7 @@ class PoliciesModule(BaseModule):
 
         # Resolve unset Pydantic Field defaults on direct Python calls.
         if unwrap_field_default(disable_first) is True:
-            disabled =self._base_query_api_call(
+            disabled = self._base_query_api_call(
                 operation=self._OPERATIONS[policy_type]["action"],
                 query_params={"action_name": "disable"},
                 body_params={"ids": ids},
