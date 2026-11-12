@@ -5,6 +5,17 @@
 
 ## Unreleased
 
+### Features
+
+* **policies:** new `falcon_get_policies` returns full policy records by ID, split into `found` and `not_found`
+* **policies:** `falcon_set_policy_precedence` can move one policy with `move_id` plus `place_first` or `place_after`, and builds the complete order itself
+* **policies:** `falcon_delete_policies` takes `disable_first` to disable the policies before deleting them
+
+### Bug Fixes
+
+* **policies:** `falcon_update_policy` and `falcon_create_policy` flatten prevention settings in the grouped shape a policy read returns into the `[{id, value}]` list the API accepts
+* **policies:** `platform_name` is sent in the API's case (`Windows`, `Mac`, `Linux`), so `windows` or `MAC` no longer fail with HTTP 400
+
 ### Documentation
 
 * name eyas-mcp throughout the docs, refresh the README module table, and update `CLAUDE.md` for the public repository and release rules

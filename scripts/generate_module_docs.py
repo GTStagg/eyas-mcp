@@ -454,6 +454,9 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
         "Show enabled sensor update policies for Windows",
         "Find prevention policies whose name contains 'default'",
     ],
+    "falcon_get_policies": [
+        "Show the full settings of prevention policy 1a2b3c",
+    ],
     "falcon_get_prevention_posture": [
         "Which prevention policies detect but don't block?",
         "Show me disabled or unassigned Windows prevention policies",
@@ -476,6 +479,7 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
     ],
     "falcon_set_policy_precedence": [
         "Set the precedence order of these Windows prevention policies: 1a2b3c, 4d5e6f, 7g8h9i",
+        "Move Windows prevention policy 1a2b3c to the top of the precedence order",
     ],
     # Quarantine
     "falcon_search_quarantined_files": [
