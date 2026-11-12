@@ -31,6 +31,17 @@ Responses include `pagination.total` (the total number of records matching the f
 - "Show me all static host groups"
 - "Find host groups created in the last 30 days"
 
+### `falcon_get_host_groups`
+
+**Required scopes:** `Host Groups:read`
+
+Get host groups by ID and report which IDs don't exist.
+
+Use this to confirm a host group still exists and to read its name,
+group_type (static, staticByID or dynamic), assignment_rule, description and
+audit fields before acting on it. Returns `found` (records in the order of
+`ids`) and `not_found` (IDs with no host group).
+
 ### `falcon_search_host_group_members`
 
 **Required scopes:** `Host Groups:read`
@@ -125,13 +136,15 @@ Returns an empty list on success.
 > [!CAUTION]
 > This tool performs destructive operations.
 
-**Required scopes:** `Host Groups:write`
+**Required scopes:** `Host Groups:read`, `Host Groups:write`
 
-Add or remove hosts from one or more host groups.
+Add or remove hosts from one or more static host groups.
 
 Set action_name to 'add-hosts' or 'remove-hosts', provide the target group
-`ids`, and a host FQL filter selecting which hosts to act on. Applies only to
-static groups. Returns the updated host group records on success.
+`ids`, and select hosts with `device_ids` (preferred) or a host FQL `filter`,
+which acts on every matching host. Every group is looked up first: the call
+is refused for dynamic groups, whose members come from their assignment rule,
+and for group IDs that don't exist. Returns the updated host group records.
 
 **Example prompts:**
 

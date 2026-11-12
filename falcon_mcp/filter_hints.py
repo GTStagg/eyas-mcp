@@ -334,7 +334,9 @@ FILTER_HINTS: dict[str, str] = {
     "falcon_search_host_groups": (
         "Common fields: name, group_type (static|dynamic|staticByID), "
         "created_by, created_timestamp (UTC datetime), "
-        "modified_by, modified_timestamp (UTC datetime)."
+        "modified_by, modified_timestamp (UTC datetime). "
+        "name matching is unreliable for names with spaces or hyphens; "
+        "use the exact_name parameter to find a group by its exact name."
     ),
     "falcon_search_host_group_members": (
         "Filters on HOST (device) attributes: hostname, platform_name (Windows|Linux|Mac), "
@@ -342,6 +344,7 @@ FILTER_HINTS: dict[str, str] = {
         "product_type_desc (Workstation|Server|Domain Controller)."
     ),
     "falcon_perform_host_group_action": (
+        "Prefer device_ids; a filter acts on every matching host. "
         "Filters on HOST (device) attributes to select members for the action: "
         "hostname, platform_name (Windows|Linux|Mac), status (normal|contained|containment_pending|lift_containment_pending), "
         "local_ip, external_ip, os_version, product_type_desc (Workstation|Server|Domain Controller)."
