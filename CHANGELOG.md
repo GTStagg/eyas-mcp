@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Features
+
+* **host groups:** `falcon_perform_host_group_action` takes `device_ids` as a safer alternative to `filter` (exactly one is required), accepts only `add-hosts` or `remove-hosts`, and refuses dynamic or unknown target groups before changing anything
+* **host groups:** new read-only `falcon_get_host_groups` tool returns host groups by ID with an explicit `not_found` list
+* **host groups:** `falcon_search_host_groups` takes `exact_name` to find a group by its exact, case-sensitive name, since FQL name matching is unreliable for names with spaces or hyphens
+
 ### Documentation
 
 * name eyas-mcp throughout the docs, refresh the README module table, and update `CLAUDE.md` for the public repository and release rules

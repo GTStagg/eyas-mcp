@@ -607,7 +607,10 @@ class TestServerToolFiltering(unittest.TestCase):
         )
         # _MUTATING_TOOL dropped by read-only, the members search dropped by the
         # deny-list, leaving the module's remaining read-only tools.
-        self.assertEqual(tools, {_READ_ONLY_TOOL, "falcon_get_host_group_membership"})
+        self.assertEqual(
+            tools,
+            {_READ_ONLY_TOOL, "falcon_get_host_groups", "falcon_get_host_group_membership"},
+        )
 
     def test_name_from_disabled_module_survives_read_only_if_read_only(self, mock_client):
         """Additive pull-in plus read-only: a read-only foreign tool is kept."""
