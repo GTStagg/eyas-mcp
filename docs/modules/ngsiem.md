@@ -117,7 +117,10 @@ It searches ProcessRollup2 events for the host in a window around
 walks parent process IDs up for `ancestry` (nearest parent first) and child
 processes down for `descendants`. When the pivot started long before
 `pivot_time`, as with behavioural detections, it looks the process up over the
-previous 7 days and re-centres the window on its start. A missing parent gets
+previous 7 days and re-centres the window on its start. When the sensor
+blocked the process before it ran, so it has no ProcessRollup2 event, the
+pivot comes from its ProcessBlocked event instead, marked `blocked`, and the
+ancestry is walked from the parent that event names. A missing parent gets
 one lookup over the same 7 days. At most 4 searches run, within
 FALCON_MCP_NGSIEM_TIMEOUT seconds in total, or within `time_budget_seconds`,
 after which the tree found so far comes back with `partial` set. Each node's

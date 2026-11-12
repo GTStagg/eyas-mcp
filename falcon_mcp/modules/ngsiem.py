@@ -204,7 +204,8 @@ _MAX_PIVOT_TIME_LENGTH = 64
 
 _PROCESS_TREE_REPOSITORY = "search-all"
 _PROCESS_TREE_EVENT_LIMIT = 5000
-# Window search, anchor probe, re-anchored window search, one parent lookup.
+# Window search, anchor probe, then at most two of: a ProcessBlocked probe, a
+# re-anchored window search and one parent lookup.
 _PROCESS_TREE_MAX_SEARCHES = 4
 _ANCHOR_PROBE_LOOKBACK = timedelta(days=7)
 _PARENT_LOOKUP_RADIUS = timedelta(minutes=60)
@@ -238,6 +239,16 @@ _PROCESS_ROLLUP_FIELDS = (
     "CodeSigningFlags",
 )
 
+# A process the sensor blocked before it ran has no ProcessRollup2 event, only a
+# ProcessBlocked one. That event carries the same process fields (a live check found
+# TargetProcessId, ParentProcessId, image, command line, user, hashes,
+# ProcessStartTime and SignInfoFlags) plus the parent's image name.
+_PROCESS_BLOCKED_FIELDS = (*_PROCESS_ROLLUP_FIELDS, "ParentBaseFileName")
+_PROCESS_TREE_EVENTS = {
+    "ProcessRollup2": _PROCESS_ROLLUP_FIELDS,
+    "ProcessBlocked": _PROCESS_BLOCKED_FIELDS,
+}
+
 # Node `signing` keys and the ProcessRollup2 fields they come from.
 _SIGNING_FIELDS = (
     ("file_sign_info", "FileSignInfo"),
@@ -251,8 +262,13 @@ def _is_valid_process_id(value: Any) -> bool:
     return isinstance(value, str) and _PROCESS_ID_PATTERN.fullmatch(value) is not None
 
 
-def _process_rollup_query(device_id: str, limit: int, target_process_id: str | None = None) -> str:
-    """Build the ProcessRollup2 CQL query for one host, optionally one process.
+def _process_rollup_query(
+    device_id: str,
+    limit: int,
+    target_process_id: str | None = None,
+    event_name: str = "ProcessRollup2",
+) -> str:
+    """Build the ProcessRollup2 (or ProcessBlocked) CQL query for one host.
 
     Every interpolated value is re-validated here, so the builder is safe even if a
     caller skips its own checks. Raises ValueError rather than emitting a query that
@@ -262,6 +278,7 @@ def _process_rollup_query(device_id: str, limit: int, target_process_id: str | N
         device_id: The host's 32-character hex AID
         limit: Maximum rows to return
         target_process_id: Only return the process with this TargetProcessId
+        event_name: ProcessRollup2 or ProcessBlocked; any other name is refused
 
     Returns:
         The CQL query string
@@ -274,13 +291,16 @@ def _process_rollup_query(device_id: str, limit: int, target_process_id: str | N
         raise ValueError("limit must be an integer")
     if not 1 <= limit <= _PROCESS_TREE_EVENT_LIMIT:
         raise ValueError(f"limit must be between 1 and {_PROCESS_TREE_EVENT_LIMIT}")
+    fields = _PROCESS_TREE_EVENTS.get(event_name) if isinstance(event_name, str) else None
+    if fields is None:
+        raise ValueError("event_name must be ProcessRollup2 or ProcessBlocked")
 
-    query_filter = f'#event_simpleName=ProcessRollup2 aid="{device_id.lower()}"'
+    query_filter = f'#event_simpleName={event_name} aid="{device_id.lower()}"'
     if target_process_id is not None:
         query_filter += f' TargetProcessId="{target_process_id}"'
     return (
         f"{query_filter}\n"
-        f"| select([{', '.join(_PROCESS_ROLLUP_FIELDS)}])\n"
+        f"| select([{', '.join(fields)}])\n"
         # sort() keeps only 200 rows unless given an explicit limit.
         f"| sort(@timestamp, order=asc, limit={limit})"
     )
@@ -335,8 +355,8 @@ def _signing(event: dict[str, Any]) -> dict[str, str] | None:
     return signing or None
 
 
-def _process_node(event: dict[str, Any]) -> dict[str, Any]:
-    """Shape a ProcessRollup2 event into a tree node.
+def _process_node(event: dict[str, Any], source_event: str = "ProcessRollup2") -> dict[str, Any]:
+    """Shape a ProcessRollup2 or ProcessBlocked event into a tree node.
 
     Ids stay strings: they can exceed the integers a JSON client represents exactly.
     The private `_start_ms` key orders nodes and is removed before returning them.
@@ -364,6 +384,11 @@ def _process_node(event: dict[str, Any]) -> dict[str, Any]:
         "signing": _signing(event),
         "process_start_time": _epoch_ms_to_iso(start_ms) if start_seconds is not None else None,
         "timestamp": _epoch_ms_to_iso(timestamp_ms),
+        # Only ProcessBlocked carries the parent's image name; for other nodes the
+        # parent's own node holds it.
+        "parent_image": str(event.get("ParentBaseFileName") or "") or None,
+        "source_event": source_event,
+        "blocked": source_event == "ProcessBlocked",
         "_start_ms": start_ms,
     }
 
@@ -725,6 +750,20 @@ class _SearchBudget:
     time_budget_seconds: int | None = None
     # Searches the time budget stopped early or left unstarted.
     cut_short: list[str] = field(default_factory=list)
+
+
+def _describe_window(
+    center: datetime, window: timedelta, events: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Describe the window searched around `center` for a process-tree result."""
+    return {
+        "pivot_time": _epoch_ms_to_iso(_to_ms(center)),
+        "start": _epoch_ms_to_iso(_to_ms(center - window)),
+        "end": _epoch_ms_to_iso(_to_ms(center + window)),
+        "anchor_recovered": False,
+        "events_scanned": len(events),
+        "event_limit_reached": len(events) >= _PROCESS_TREE_EVENT_LIMIT,
+    }
 
 
 def _sorted_nodes(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1657,7 +1696,10 @@ class NGSIEMModule(BaseModule):
         walks parent process IDs up for `ancestry` (nearest parent first) and child
         processes down for `descendants`. When the pivot started long before
         `pivot_time`, as with behavioural detections, it looks the process up over the
-        previous 7 days and re-centres the window on its start. A missing parent gets
+        previous 7 days and re-centres the window on its start. When the sensor
+        blocked the process before it ran, so it has no ProcessRollup2 event, the
+        pivot comes from its ProcessBlocked event instead, marked `blocked`, and the
+        ancestry is walked from the parent that event names. A missing parent gets
         one lookup over the same 7 days. At most 4 searches run, within
         FALCON_MCP_NGSIEM_TIMEOUT seconds in total, or within `time_budget_seconds`,
         after which the tree found so far comes back with `partial` set. Each node's
@@ -1796,25 +1838,15 @@ class NGSIEMModule(BaseModule):
             "notes": budget.notes,
         }
 
-        def describe_window(center: datetime, events: list[dict[str, Any]]) -> dict[str, Any]:
-            return {
-                "pivot_time": _epoch_ms_to_iso(_to_ms(center)),
-                "start": _epoch_ms_to_iso(_to_ms(center - window)),
-                "end": _epoch_ms_to_iso(_to_ms(center + window)),
-                "anchor_recovered": False,
-                "events_scanned": len(events),
-                "event_limit_reached": len(events) >= _PROCESS_TREE_EVENT_LIMIT,
-            }
-
         if outcome is None or outcome.events is None:
             budget.notes.append(
                 "The window search did not complete in time. Retry with a smaller window_minutes."
             )
-            result["window"] = describe_window(pivot_dt, [])
+            result["window"] = _describe_window(pivot_dt, window, [])
             return result
 
         events = outcome.events
-        result["window"] = describe_window(pivot_dt, events)
+        result["window"] = _describe_window(pivot_dt, window, events)
         if len(events) >= _PROCESS_TREE_EVENT_LIMIT:
             budget.notes.append(
                 f"The window returned the maximum of {_PROCESS_TREE_EVENT_LIMIT} events, "
@@ -1844,7 +1876,7 @@ class NGSIEMModule(BaseModule):
                 if recentred is not None and recentred.events:
                     events = recentred.events
                     rows = _sorted_nodes(events)
-                    result["window"] = describe_window(center, events)
+                    result["window"] = _describe_window(center, window, events)
                     budget.notes.append(
                         "The pivot was not in the window around pivot_time; the window was "
                         "re-centred on the process's own start time."
@@ -1862,10 +1894,8 @@ class NGSIEMModule(BaseModule):
                 pivot_dt = center
                 result["window"]["anchor_recovered"] = True
             elif probe is not None and probe.events is not None and not probe.timed_out:
-                budget.notes.append(
-                    f"No ProcessRollup2 event for TargetProcessId {target_pid} on this host "
-                    "in the 7 days before pivot_time. Its telemetry may have aged out or "
-                    "never reached NGSIEM."
+                pivot, rows, pivot_dt = await self._blocked_pivot(
+                    budget, result, device_id, target_pid, pivot_dt, window, window_query, rows
                 )
 
         if pivot is None:
@@ -1897,6 +1927,73 @@ class NGSIEMModule(BaseModule):
                 f"Parent process {unresolved} was not found, so the ancestry stops there."
             )
         return result
+
+    async def _blocked_pivot(
+        self,
+        budget: _SearchBudget,
+        result: dict[str, Any],
+        device_id: str,
+        target_pid: str,
+        pivot_dt: datetime,
+        window: timedelta,
+        window_query: str,
+        rows: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any] | None, list[dict[str, Any]], datetime]:
+        """Build the pivot from a ProcessBlocked event when it has no ProcessRollup2.
+
+        The sensor writes no ProcessRollup2 for a process it blocks before it runs, but
+        the parent chain is still in ProcessRollup2. When the blocked event lies outside
+        the window, the window is re-centred on it so its ancestors are found there.
+
+        Returns:
+            The pivot node or None, the rows to walk, and the pivot time to use
+        """
+        probe = await self._process_tree_search(
+            budget,
+            "blocked_probe",
+            _process_rollup_query(device_id, 1, target_pid, event_name="ProcessBlocked"),
+            pivot_dt - _ANCHOR_PROBE_LOOKBACK,
+            pivot_dt + window,
+        )
+        if probe is None or probe.events is None or probe.timed_out:
+            return None, rows, pivot_dt
+        if not probe.events:
+            budget.notes.append(
+                f"No ProcessRollup2 or ProcessBlocked event for TargetProcessId {target_pid} "
+                "on this host in the 7 days before pivot_time. Its telemetry may have aged "
+                "out or never reached NGSIEM."
+            )
+            return None, rows, pivot_dt
+
+        pivot = _process_node(probe.events[0], "ProcessBlocked")
+        budget.notes.append(
+            f"TargetProcessId {target_pid} has no ProcessRollup2 event: the sensor blocked "
+            "it before it ran. The pivot comes from its ProcessBlocked event, and the "
+            "ancestry is walked from the parent that event names."
+        )
+        if not pivot["parent_process_id"]:
+            budget.notes.append(
+                "The ProcessBlocked event names no parent process, so there is no ancestry."
+            )
+
+        start_ms = pivot["_start_ms"]
+        window_ms = window.total_seconds() * 1000
+        if start_ms is None or abs(start_ms - _to_ms(pivot_dt)) <= window_ms:
+            return pivot, [pivot, *rows], pivot_dt
+
+        center = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
+        recentred = await self._process_tree_search(
+            budget, "recentred_window", window_query, center - window, center + window
+        )
+        if recentred is not None and recentred.events:
+            rows = _sorted_nodes(recentred.events)
+            result["window"] = _describe_window(center, window, recentred.events)
+            budget.notes.append(
+                "The blocked process was outside the window around pivot_time; the window "
+                "was re-centred on its start time."
+            )
+        result["window"]["anchor_recovered"] = True
+        return pivot, [pivot, *rows], center
 
     async def _walk_ancestry(
         self,
