@@ -1653,6 +1653,104 @@ class TestDetectionsModule(TestModules):
         self.assertNotIn("partial_success", result)
 
 
+class TestAlertHydrationBatches(TestModules):
+    """Alert lookups send at most ALERT_ENTITY_BATCH composite ids per request."""
+
+    def setUp(self):
+        self.setup_module(DetectionsModule)
+
+    @staticmethod
+    def _echo_details(_operation, body=None, parameters=None):
+        """PostEntitiesAlertsV2 returning one record per id, in reverse order."""
+        ids = body["composite_ids"]
+        return {
+            "status_code": 200,
+            "body": {"resources": [{"composite_id": cid} for cid in reversed(ids)]},
+        }
+
+    def _batches(self):
+        return [
+            call.kwargs["body"]["composite_ids"]
+            for call in self.mock_client.command.call_args_list
+            if call.args[0] == "PostEntitiesAlertsV2"
+        ]
+
+    def test_batch_size_matches_the_live_finding(self):
+        from falcon_mcp.modules.detections import ALERT_ENTITY_BATCH
+
+        self.assertEqual(ALERT_ENTITY_BATCH, 1000)
+
+    def test_detection_details_split_into_batches(self):
+        ids = [f"cid-{i}" for i in range(2500)]
+        self.mock_client.command.side_effect = self._echo_details
+
+        result = self.module.get_detection_details(ids=ids, include_hidden=False)
+
+        batches = self._batches()
+        self.assertEqual([len(b) for b in batches], [1000, 1000, 500])
+        self.assertEqual([cid for b in batches for cid in b], ids)
+        for call in self.mock_client.command.call_args_list:
+            self.assertEqual(call.kwargs["parameters"], {"include_hidden": False})
+        self.assertEqual(len(result), 2500)
+
+    def test_detection_details_at_the_limit_is_one_request(self):
+        ids = [f"cid-{i}" for i in range(1000)]
+        self.mock_client.command.side_effect = self._echo_details
+
+        result = self.module.get_detection_details(ids=ids)
+
+        self.assertEqual([len(b) for b in self._batches()], [1000])
+        self.assertEqual(len(result), 1000)
+
+    def test_search_detections_keeps_the_query_order_across_batches(self):
+        ids = [f"cid-{i}" for i in range(1500)]
+
+        def command(operation, **kwargs):
+            if operation == "GetQueriesAlertsV2":
+                return {
+                    "status_code": 200,
+                    "body": {
+                        "resources": ids,
+                        "meta": {"pagination": {"offset": 0, "limit": 1500, "total": 1500}},
+                    },
+                }
+            return self._echo_details(operation, **kwargs)
+
+        self.mock_client.command.side_effect = command
+
+        result = self.module.search_detections(limit=1500, sort="severity.desc")
+
+        self.assertEqual([len(b) for b in self._batches()], [1000, 500])
+        self.assertEqual([r["composite_id"] for r in result["results"]], ids)
+
+    def test_failing_batch_returns_its_error_and_stops(self):
+        ids = [f"cid-{i}" for i in range(2500)]
+        self.mock_client.command.side_effect = [
+            self._echo_details("PostEntitiesAlertsV2", body={"composite_ids": ids[:1000]}),
+            {"status_code": 500, "body": {"errors": [{"message": "boom"}]}},
+        ]
+
+        result = self.module.get_detection_details(ids=ids)
+
+        self.assertIsInstance(result, dict)
+        self.assertIn("error", result)
+        self.assertEqual(self.mock_client.command.call_count, 2)
+
+    def test_search_detections_batch_error_is_returned(self):
+        ids = [f"cid-{i}" for i in range(1200)]
+        self.mock_client.command.side_effect = [
+            {"status_code": 200, "body": {"resources": ids}},
+            self._echo_details("PostEntitiesAlertsV2", body={"composite_ids": ids[:1000]}),
+            {"status_code": 403, "body": {"errors": [{"message": "denied"}]}},
+        ]
+
+        result = self.module.search_detections(limit=1200)
+
+        self.assertIsInstance(result, list)
+        self.assertIn("error", result[0])
+        self.assertEqual(self.mock_client.command.call_count, 3)
+
+
 if __name__ == "__main__":
     unittest.main()
 

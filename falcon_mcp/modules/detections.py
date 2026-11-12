@@ -38,7 +38,10 @@ MAX_HOST_DETECTIONS = 10000
 # correlation alerts carry no device block; they name hosts in agent_id,
 # enriched_entities.aids and users[].aid instead (validated against the live API).
 RELATED_HOST_FIELDS = ("agent_id", "enriched_entities.aids", "users.aid")
-ALERT_ENTITY_BATCH = 100
+# Most composite ids sent to PostEntitiesAlertsV2 in one request. A live check
+# returned every alert for 100, 101, 500 and 1000 ids in one request with no errors;
+# more than 1000 was not tested, so larger lookups are split into batches of this size.
+ALERT_ENTITY_BATCH = 1000
 MAX_SKIPPED_IDS_SHOWN = 100
 
 
@@ -212,12 +215,7 @@ class DetectionsModule(BaseModule):
             return self._build_pagination_envelope([], pagination, filter)
 
         # Get detection details - past FQL concerns, normal API flow
-        details = self._base_get_by_ids(
-            operation="PostEntitiesAlertsV2",
-            ids=detection_ids,
-            id_key="composite_ids",
-            parameters={"include_hidden": include_hidden},
-        )
+        details = self._get_alerts_by_ids(detection_ids, include_hidden)
 
         if self._is_error(details):
             return [details]
@@ -249,12 +247,35 @@ class DetectionsModule(BaseModule):
         """
         logger.debug("Getting detection details for ID(s): %s", ids)
 
-        return self._base_get_by_ids(
-            operation="PostEntitiesAlertsV2",
-            ids=ids,
-            id_key="composite_ids",
-            parameters={"include_hidden": include_hidden},
-        )
+        return self._get_alerts_by_ids(ids, include_hidden)
+
+    def _get_alerts_by_ids(
+        self, ids: list[str], include_hidden: bool
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Fetch alerts by composite id, at most ALERT_ENTITY_BATCH ids per request.
+
+        Returns:
+            The records of every batch, in batch order, or the first batch's error
+        """
+        if len(ids) <= ALERT_ENTITY_BATCH:
+            return self._base_get_by_ids(
+                operation="PostEntitiesAlertsV2",
+                ids=ids,
+                id_key="composite_ids",
+                parameters={"include_hidden": include_hidden},
+            )
+        records: list[dict[str, Any]] = []
+        for start in range(0, len(ids), ALERT_ENTITY_BATCH):
+            batch = self._base_get_by_ids(
+                operation="PostEntitiesAlertsV2",
+                ids=ids[start : start + ALERT_ENTITY_BATCH],
+                id_key="composite_ids",
+                parameters={"include_hidden": include_hidden},
+            )
+            if isinstance(batch, dict):
+                return batch
+            records.extend(batch)
+        return records
 
     def aggregate_detections(
         self,
@@ -719,12 +740,7 @@ class DetectionsModule(BaseModule):
         multi_host: list[str] = []
         for start in range(0, len(related_ids), ALERT_ENTITY_BATCH):
             batch = related_ids[start : start + ALERT_ENTITY_BATCH]
-            records = self._base_get_by_ids(
-                operation="PostEntitiesAlertsV2",
-                ids=batch,
-                id_key="composite_ids",
-                parameters={"include_hidden": True},
-            )
+            records = self._get_alerts_by_ids(batch, include_hidden=True)
             if isinstance(records, dict):
                 return {**records, "phase": "search"}
             by_id = {r.get("composite_id"): r for r in records if isinstance(r, dict)}
