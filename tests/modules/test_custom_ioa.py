@@ -7,7 +7,7 @@ import unittest
 from mcp.types import ToolAnnotations
 
 from falcon_mcp.modules.base import READ_ONLY_ANNOTATIONS
-from falcon_mcp.modules.custom_ioa import CustomIOAModule
+from falcon_mcp.modules.custom_ioa import MAX_RULE_UPDATES, CustomIOAModule, _clean_comment
 from tests.modules.utils.test_modules import TestModules
 
 
@@ -526,12 +526,56 @@ class TestCustomIOAModule(TestModules):
 
     # --- update_ioa_rule ---
 
+    @staticmethod
+    def _live_rule(instance_id, **overrides):
+        rule = {
+            "instance_id": instance_id,
+            "name": f"Rule {instance_id}",
+            "description": f"Description {instance_id}",
+            "pattern_severity": "medium",
+            "disposition_id": 10,
+            "enabled": False,
+            "field_values": [{"name": "ImageFilename", "value": ".*", "label": "Image"}],
+            "ruletype_id": "5",
+            "magic_cookie": 42,
+        }
+        rule.update(overrides)
+        return rule
+
+    def _group_response(self, rules, version=5, group_id="rg-001"):
+        return {
+            "status_code": 200,
+            "body": {"resources": [{"id": group_id, "version": version, "rules": rules}]},
+        }
+
+    def _set_update_responses(self, rules, version=5, update_resources=None):
+        self.mock_client.command.side_effect = [
+            self._group_response(rules, version=version),
+            {"status_code": 200, "body": {"resources": update_resources or [{}]}},
+        ]
+
+    def _update_body(self):
+        call_args = self.mock_client.command.call_args_list[1]
+        self.assertEqual(call_args[0][0], "update_rules_v2")
+        return call_args[1]["body"]
+
+    def test_update_ioa_rule_reads_group_once(self):
+        """The rule group is read once, by ID, before the update."""
+        self._set_update_responses([self._live_rule("rule-001")])
+        self.module.update_ioa_rule(
+            rulegroup_id="rg-001", rulegroup_version=5, instance_id="rule-001", enabled=True
+        )
+        self.assertEqual(self.mock_client.command.call_count, 2)
+        read = self.mock_client.command.call_args_list[0]
+        self.assertEqual(read[0][0], "get_rule_groupsMixin0")
+        self.assertEqual(read[1]["parameters"]["ids"], ["rg-001"])
+
     def test_update_ioa_rule_enable(self):
         """Test enabling a rule."""
-        self.mock_client.command.return_value = {
-            "status_code": 200,
-            "body": {"resources": [{"instance_id": "rule-001", "enabled": True}]},
-        }
+        self._set_update_responses(
+            [self._live_rule("rule-001")],
+            update_resources=[{"instance_id": "rule-001", "enabled": True}],
+        )
 
         result = self.module.update_ioa_rule(
             rulegroup_id="rg-001",
@@ -541,9 +585,7 @@ class TestCustomIOAModule(TestModules):
             comment="Enabling rule",
         )
 
-        call_args = self.mock_client.command.call_args
-        self.assertEqual(call_args[0][0], "update_rules_v2")
-        body = call_args[1]["body"]
+        body = self._update_body()
         self.assertEqual(body["rulegroup_id"], "rg-001")
         self.assertEqual(body["rulegroup_version"], 5)
         self.assertEqual(body["comment"], "Enabling rule")
@@ -552,51 +594,348 @@ class TestCustomIOAModule(TestModules):
         self.assertEqual(body["rule_updates"][0]["enabled"], True)
         self.assertEqual(len(result), 1)
 
-    def test_update_ioa_rule_change_severity(self):
-        """Test changing a rule's severity."""
-        self.mock_client.command.return_value = {
-            "status_code": 200,
-            "body": {"resources": [{"instance_id": "rule-001", "pattern_severity": "critical"}]},
-        }
-
-        result = self.module.update_ioa_rule(
-            rulegroup_id="rg-001",
-            rulegroup_version=3,
-            instance_id="rule-001",
-            name=None,
-            description=None,
-            enabled=None,
-            pattern_severity="critical",
-            disposition_id=None,
-            field_values=None,
-            comment=None,
-        )
-
-        call_args = self.mock_client.command.call_args
-        rule_update = call_args[1]["body"]["rule_updates"][0]
-        self.assertEqual(rule_update["pattern_severity"], "critical")
-        self.assertNotIn("enabled", rule_update)
-        self.assertNotIn("name", rule_update)
-        self.assertEqual(len(result), 1)
-
-    def test_update_ioa_rule_with_field_values(self):
-        """Test updating a rule's field values."""
-        new_field_values = [{"name": "ImageFilename", "value": ".*\\\\malware\\.exe"}]
-        self.mock_client.command.return_value = {
-            "status_code": 200,
-            "body": {"resources": [{"instance_id": "rule-001"}]},
-        }
+    def test_update_ioa_rule_partial_single_sends_full_rule(self):
+        """A partial single-mode update sends every rule field, filled from the live rule."""
+        live = self._live_rule("rule-001")
+        self._set_update_responses([live])
 
         self.module.update_ioa_rule(
             rulegroup_id="rg-001",
-            rulegroup_version=2,
+            rulegroup_version=5,
+            instance_id="rule-001",
+            pattern_severity="critical",
+        )
+
+        rule_update = self._update_body()["rule_updates"][0]
+        self.assertEqual(
+            rule_update,
+            {
+                "instance_id": "rule-001",
+                "name": "Rule rule-001",
+                "description": "Description rule-001",
+                "enabled": False,
+                "pattern_severity": "critical",
+                "disposition_id": 10,
+                "field_values": live["field_values"],
+                "rulegroup_version": 5,
+            },
+        )
+
+    def test_update_ioa_rule_missing_description_defaults_to_empty(self):
+        """A live rule without description or field_values gets "" and []."""
+        live = self._live_rule("rule-001")
+        del live["description"]
+        del live["field_values"]
+        self._set_update_responses([live])
+        self.module.update_ioa_rule(
+            rulegroup_id="rg-001", rulegroup_version=5, instance_id="rule-001", enabled=True
+        )
+        rule_update = self._update_body()["rule_updates"][0]
+        self.assertEqual(rule_update["description"], "")
+        self.assertEqual(rule_update["field_values"], [])
+
+    def test_update_ioa_rule_with_field_values(self):
+        """Caller field values replace the live list."""
+        new_field_values = [{"name": "ImageFilename", "value": ".*\\\\malware\\.exe"}]
+        self._set_update_responses([self._live_rule("rule-001")])
+
+        self.module.update_ioa_rule(
+            rulegroup_id="rg-001",
+            rulegroup_version=5,
             instance_id="rule-001",
             field_values=new_field_values,
         )
 
-        call_args = self.mock_client.command.call_args
-        rule_update = call_args[1]["body"]["rule_updates"][0]
-        self.assertEqual(rule_update["field_values"], new_field_values)
+        body = self._update_body()
+        self.assertEqual(body["rule_updates"][0]["field_values"], new_field_values)
+        # Unset optional arguments never leak into the body.
+        self.assertNotIn("comment", body)
+
+    def test_update_ioa_rule_stale_version(self):
+        """A rulegroup_version that differs from the live group errors with no write."""
+        self._set_update_responses([self._live_rule("rule-001")], version=6)
+        result = self.module.update_ioa_rule(
+            rulegroup_id="rg-001", rulegroup_version=5, instance_id="rule-001", enabled=True
+        )
+        self.assertEqual(len(result), 1)
+        self.assertIn("stale", result[0]["error"])
+        self.assertIn("version 6", result[0]["error"])
+        self.assertEqual(self.mock_client.command.call_count, 1)
+
+    def test_update_ioa_rule_unknown_instance_id(self):
+        """An instance_id that is not in the group errors with no write."""
+        self._set_update_responses([self._live_rule("rule-001")])
+        result = self.module.update_ioa_rule(
+            rulegroup_id="rg-001", rulegroup_version=5, instance_id="rule-999", enabled=True
+        )
+        self.assertIn("rule-999", result[0]["error"])
+        self.assertEqual(self.mock_client.command.call_count, 1)
+
+    def test_update_ioa_rule_group_read_fails(self):
+        """A failed rule group read errors with no write."""
+        self.mock_client.command.side_effect = [
+            {"status_code": 403, "body": {"errors": [{"code": 403, "message": "denied"}]}},
+        ]
+        result = self.module.update_ioa_rule(
+            rulegroup_id="rg-001", rulegroup_version=5, instance_id="rule-001", enabled=True
+        )
+        self.assertIn("Could not read rule group", result[0]["error"])
+        self.assertIn("details", result[0])
+        self.assertEqual(self.mock_client.command.call_count, 1)
+
+    def test_update_ioa_rule_group_not_found(self):
+        """An empty or mismatched rule group read errors with no write."""
+        for resources in ([], [{"id": "rg-other", "version": 5, "rules": []}]):
+            with self.subTest(resources=resources):
+                self.mock_client.command.reset_mock()
+                self.mock_client.command.side_effect = [
+                    {"status_code": 200, "body": {"resources": resources}},
+                ]
+                result = self.module.update_ioa_rule(
+                    rulegroup_id="rg-001",
+                    rulegroup_version=5,
+                    instance_id="rule-001",
+                    enabled=True,
+                )
+                self.assertIn("was not found", result[0]["error"])
+                self.assertEqual(self.mock_client.command.call_count, 1)
+
+    # --- update_ioa_rule batch mode ---
+
+    def test_update_ioa_rule_batch_sends_one_call(self):
+        """Batch mode reads the group once and sends every full rule in one call."""
+        rule_1 = self._live_rule("1")
+        rule_2 = self._live_rule("2", description="")
+        untouched = self._live_rule("3")
+        self._set_update_responses(
+            [rule_1, rule_2, untouched],
+            version=7,
+            update_resources=[{"instance_id": "1"}, {"instance_id": "2"}],
+        )
+
+        result = self.module.update_ioa_rule(
+            rulegroup_id="rg-001",
+            rulegroup_version=7,
+            rule_updates=[
+                {"instance_id": "1", "enabled": True},
+                {"instance_id": "2", "enabled": True, "pattern_severity": "high"},
+            ],
+            comment="Enable group",
+        )
+
+        self.assertEqual(self.mock_client.command.call_count, 2)
+        body = self._update_body()
+        self.assertEqual(body["rulegroup_id"], "rg-001")
+        self.assertEqual(body["rulegroup_version"], 7)
+        self.assertEqual(body["comment"], "Enable group")
+        self.assertEqual(
+            body["rule_updates"],
+            [
+                {
+                    "instance_id": "1",
+                    "name": "Rule 1",
+                    "description": "Description 1",
+                    "enabled": True,
+                    "pattern_severity": "medium",
+                    "disposition_id": 10,
+                    "field_values": rule_1["field_values"],
+                    "rulegroup_version": 7,
+                },
+                {
+                    "instance_id": "2",
+                    "name": "Rule 2",
+                    "description": "",
+                    "enabled": True,
+                    "pattern_severity": "high",
+                    "disposition_id": 10,
+                    "field_values": rule_2["field_values"],
+                    "rulegroup_version": 7,
+                },
+            ],
+        )
+        self.assertEqual(len(result), 2)
+
+    def test_update_ioa_rule_batch_unknown_instance_ids(self):
+        """Every unknown instance_id is named and nothing is written."""
+        self._set_update_responses([self._live_rule("1")])
+        result = self.module.update_ioa_rule(
+            rulegroup_id="rg-001",
+            rulegroup_version=5,
+            rule_updates=[
+                {"instance_id": "1", "enabled": True},
+                {"instance_id": "8", "enabled": True},
+                {"instance_id": "9", "enabled": True},
+            ],
+        )
+        self.assertIn("8, 9", result[0]["error"])
+        self.assertEqual(self.mock_client.command.call_count, 1)
+
+    def test_update_ioa_rule_batch_stale_version(self):
+        """Batch mode also refuses a stale rulegroup_version."""
+        self._set_update_responses([self._live_rule("1")], version=9)
+        result = self.module.update_ioa_rule(
+            rulegroup_id="rg-001",
+            rulegroup_version=5,
+            rule_updates=[{"instance_id": "1", "enabled": True}],
+        )
+        self.assertIn("stale", result[0]["error"])
+        self.assertEqual(self.mock_client.command.call_count, 1)
+
+    def test_update_ioa_rule_batch_drops_none_values(self):
+        """None values inside an item fall back to the live rule's value."""
+        self._set_update_responses([self._live_rule("1")])
+        self.module.update_ioa_rule(
+            rulegroup_id="rg-001",
+            rulegroup_version=5,
+            rule_updates=[{"instance_id": "1", "enabled": False, "name": None}],
+        )
+        rule_update = self._update_body()["rule_updates"][0]
+        self.assertEqual(rule_update["name"], "Rule 1")
+
+    def test_update_ioa_rule_batch_api_error(self):
+        """An API failure in batch mode is returned wrapped in a list."""
+        self.mock_client.command.side_effect = [
+            self._group_response([self._live_rule("1")]),
+            {"status_code": 409, "body": {"errors": [{"code": 409, "message": "version conflict"}]}},
+        ]
+        result = self.module.update_ioa_rule(
+            rulegroup_id="rg-001",
+            rulegroup_version=5,
+            rule_updates=[{"instance_id": "1", "enabled": True}],
+        )
+        self.assertEqual(len(result), 1)
+        self.assertIn("error", result[0])
+
+    def _assert_update_rejected(self, expected_text, **kwargs):
+        result = self.module.update_ioa_rule(rulegroup_id="rg-001", rulegroup_version=1, **kwargs)
+        self.assertEqual(len(result), 1)
+        self.assertIn("error", result[0])
+        self.assertIn(expected_text, result[0]["error"])
+        self.mock_client.command.assert_not_called()
+
+    def test_update_ioa_rule_requires_exactly_one_mode(self):
+        """Neither or both of instance_id and rule_updates is an error."""
+        self._assert_update_rejected("exactly one", enabled=True)
+        self._assert_update_rejected(
+            "exactly one",
+            instance_id="1",
+            rule_updates=[{"instance_id": "2", "enabled": True}],
+        )
+
+    def test_update_ioa_rule_batch_rejects_single_mode_fields(self):
+        """Top-level rule fields cannot be combined with rule_updates."""
+        self._assert_update_rejected(
+            "enabled, name",
+            rule_updates=[{"instance_id": "1", "enabled": True}],
+            enabled=True,
+            name="x",
+        )
+
+    def test_update_ioa_rule_batch_validation(self):
+        """Each rule_updates item is checked before any API call."""
+        cases = [
+            ([], "non-empty list"),
+            ("not-a-list", "non-empty list"),
+            (["x"], "rule_updates[0] must be an object"),
+            ([{"enabled": True}], "rule_updates[0] needs a non-empty string `instance_id`"),
+            ([{"instance_id": "", "enabled": True}], "needs a non-empty string"),
+            ([{"instance_id": 5, "enabled": True}], "needs a non-empty string"),
+            ([{"instance_id": "1"}], "at least one field"),
+            ([{"instance_id": "1", "enabled": None}], "at least one field"),
+            ([{"instance_id": "1", "ruletype_id": "x"}], "unsupported keys: ruletype_id"),
+            (
+                [{"instance_id": "1", "enabled": True}, {"instance_id": "1", "enabled": False}],
+                "rule_updates[1] repeats instance_id '1'",
+            ),
+            ([{"instance_id": "1", "enabled": "yes"}], "rule_updates[0].enabled must be of type bool"),
+            ([{"instance_id": "1", "name": 3}], "name must be of type str"),
+            ([{"instance_id": "1", "disposition_id": "10"}], "disposition_id must be of type int"),
+            ([{"instance_id": "1", "disposition_id": True}], "disposition_id must be of type int"),
+            ([{"instance_id": "1", "field_values": {}}], "field_values must be of type list"),
+            ([{"instance_id": "1", "field_values": ["x"]}], "field_values must be a list of objects"),
+            ([{"instance_id": "1", "pattern_severity": "severe"}], "pattern_severity 'severe'"),
+        ]
+        for rule_updates, expected in cases:
+            with self.subTest(rule_updates=rule_updates):
+                self.mock_client.command.reset_mock()
+                self._assert_update_rejected(expected, rule_updates=rule_updates)
+
+    def test_update_ioa_rule_batch_cap(self):
+        """More than MAX_RULE_UPDATES items is rejected; exactly the cap is allowed."""
+        too_many = [{"instance_id": str(i), "enabled": True} for i in range(MAX_RULE_UPDATES + 1)]
+        self._assert_update_rejected("the limit is", rule_updates=too_many)
+
+        self._set_update_responses(
+            [self._live_rule(str(i)) for i in range(MAX_RULE_UPDATES)], version=1
+        )
+        self.module.update_ioa_rule(
+            rulegroup_id="rg-001",
+            rulegroup_version=1,
+            rule_updates=too_many[:MAX_RULE_UPDATES],
+        )
+        self.assertEqual(len(self._update_body()["rule_updates"]), MAX_RULE_UPDATES)
+
+    # --- comment cleaning ---
+
+    def test_clean_comment(self):
+        """Control characters become spaces and whitespace runs collapse."""
+        self.assertEqual(_clean_comment("line one\nline two"), "line one line two")
+        self.assertEqual(_clean_comment("a\r\n\tb  c\x00d\x7fe"), "a b c d e")
+        self.assertEqual(_clean_comment("  padded  "), "padded")
+        self.assertIsNone(_clean_comment(None))
+
+    def test_write_tools_clean_comment(self):
+        """Every Custom IOA write tool cleans its comment before sending it."""
+        # One response that also serves as the rule group read update_ioa_rule makes.
+        self.mock_client.command.return_value = {
+            "status_code": 200,
+            "body": {"resources": [{"id": "rg-1", "version": 1, "rules": [{"instance_id": "1"}]}]},
+        }
+        raw = "Ticket 1\n\tapproved"
+        calls = [
+            (
+                lambda: self.module.create_ioa_rule_group(
+                    name="g", platform="windows", description=None, comment=raw
+                ),
+                "body",
+            ),
+            (
+                lambda: self.module.update_ioa_rule_group(
+                    id="rg-1", rulegroup_version=1, enabled=True, comment=raw
+                ),
+                "body",
+            ),
+            (lambda: self.module.delete_ioa_rule_groups(ids=["rg-1"], comment=raw), "parameters"),
+            (
+                lambda: self.module.create_ioa_rule(
+                    rulegroup_id="rg-1",
+                    name="r",
+                    ruletype_id="1",
+                    disposition_id=10,
+                    pattern_severity="low",
+                    field_values=[],
+                    description=None,
+                    comment=raw,
+                ),
+                "body",
+            ),
+            (
+                lambda: self.module.update_ioa_rule(
+                    rulegroup_id="rg-1", rulegroup_version=1, instance_id="1", comment=raw
+                ),
+                "body",
+            ),
+            (
+                lambda: self.module.delete_ioa_rules(rule_group_id="rg-1", ids=["1"], comment=raw),
+                "parameters",
+            ),
+        ]
+        for call, location in calls:
+            with self.subTest(location=location):
+                self.mock_client.command.reset_mock()
+                call()
+                sent = self.mock_client.command.call_args[1][location]
+                self.assertEqual(sent["comment"], "Ticket 1 approved")
 
     # --- delete_ioa_rules ---
 

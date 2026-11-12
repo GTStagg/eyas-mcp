@@ -13,6 +13,10 @@
 * **ngsiem:** `falcon_get_process_tree` takes `time_budget_seconds` and returns the tree found so far with `partial` set when the budget runs out ([#16](https://github.com/GTStagg/eyas-mcp/pull/16))
 * **ngsiem:** process tree nodes carry the sensor's raw signing fields in `signing` ([#16](https://github.com/GTStagg/eyas-mcp/pull/16))
 * **ngsiem:** `check_cql` on `falcon_search_ngsiem` warns about calls to unknown CQL functions and suggests the closest names, without blocking the search ([#16](https://github.com/GTStagg/eyas-mcp/pull/16))
+* **custom ioa:** `falcon_update_ioa_rule` takes an optional `rule_updates` list to update up to 100 rules in one rule group in a single call, for example to enable a new group's rules ([#17](https://github.com/GTStagg/eyas-mcp/pull/17))
+* **custom ioa:** `falcon_update_ioa_rule` reads the rule group first and sends each rule in full, filling fields the caller left unset from the live rule; a stale `rulegroup_version` or an unknown rule now returns an error without writing ([#17](https://github.com/GTStagg/eyas-mcp/pull/17))
+* **exclusions:** `falcon_create_exclusion` defaults an IOA `cl_regex` to `.*` when it is not given ([#17](https://github.com/GTStagg/eyas-mcp/pull/17))
+* **exclusions:** `falcon_create_exclusion` takes `skip_if_duplicate` to return an existing IOA exclusion (same `pattern_id`, `ifn_regex` and `cl_regex`) or ML exclusion (same `value`) instead of creating another ([#17](https://github.com/GTStagg/eyas-mcp/pull/17))
 
 ### Bug Fixes
 
@@ -20,6 +24,9 @@
 * **policies:** `falcon_update_policy` and `falcon_create_policy` flatten prevention settings in the grouped shape a policy read returns into the `[{id, value}]` list the API accepts ([#15](https://github.com/GTStagg/eyas-mcp/pull/15))
 * **policies:** `platform_name` is sent in the API's case (`Windows`, `Mac`, `Linux`), so `windows` or `MAC` no longer fail with HTTP 400 ([#15](https://github.com/GTStagg/eyas-mcp/pull/15))
 * **detections:** `falcon_search_detections` and `falcon_get_detection_details` fetch alerts in batches of at most 1000 ids ([#16](https://github.com/GTStagg/eyas-mcp/pull/16))
+* **custom ioa:** write tools replace control characters in `comment` with spaces, which Falcon otherwise rejects with HTTP 400 ([#17](https://github.com/GTStagg/eyas-mcp/pull/17))
+* **exclusions:** IOA regexes are checked for the `\B` zero-width assertion too, and ML `excluded_from` values other than `blocking` and `extraction` are rejected before any API call ([#17](https://github.com/GTStagg/eyas-mcp/pull/17))
+* **data security:** `falcon_create_data_security_entity` replaces en and em dashes in `name` and `description` with hyphens, rejects the `global` region before calling the API, and returns full records for entity types whose create call answers with IDs only (previously a list of ID strings) ([#17](https://github.com/GTStagg/eyas-mcp/pull/17))
 
 ### Documentation
 

@@ -64,7 +64,8 @@ Creates classifications, policies, content patterns, cloud applications,
 enterprise accounts, web locations, local applications, local application
 groups, and sensitivity labels; policies also need platform_name. Bodies
 reference other entities by ID, so look those IDs up with search first and
-never guess them. Returns a list containing the created entity.
+never guess them. Returns a list containing the created entity, as full
+records like falcon_get_data_security_entities returns.
 
 **Example prompts:**
 
