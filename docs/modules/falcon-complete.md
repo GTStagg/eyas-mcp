@@ -1,15 +1,16 @@
 <!-- meta:title Falcon Complete -->
-<!-- meta:description This module provides read-only tools for Falcon Complete: Message Center cases and their activity threads, and the counts behind the Falcon Complete dashboard -->
+<!-- meta:description Falcon Complete: reading Message Center cases, their activity threads and the counts behind the Falcon Complete dashboard, and opening cases, commenting on them and attaching files -->
 <!-- meta:section modules -->
 <!-- meta:link-base /eyas-mcp/ -->
 <!-- frontmatter:sidebar order:10 -->
 
-This module provides read-only tools for Falcon Complete: Message Center cases and their activity threads, and the counts behind the Falcon Complete dashboard
+Falcon Complete: reading Message Center cases, their activity threads and the counts behind the Falcon Complete dashboard, and opening cases, commenting on them and attaching files
 
 ## API Scopes
 
 - `Falcon Complete Dashboards:read`
 - `Message Center:read`
+- `Message Center:write`
 
 ## Tools
 
@@ -95,6 +96,50 @@ record IDs, so read case details with falcon_search_message_center_cases.
 
 - "How many escalations has Falcon Complete raised, by severity?"
 - "How many blocklist requests were made each month?"
+
+### `falcon_create_message_center_case`
+
+**Required scopes:** `Message Center:write`
+
+Open a Message Center case with Falcon Complete or CrowdStrike Support.
+
+Use this to ask the Falcon Complete team about a detection or incident, or to
+raise a product question. This sends a message to CrowdStrike analysts, who
+will see and act on it, and it cannot be withdrawn, so confirm the wording
+with the user first. Returns the API's response for the new case.
+
+**Example prompts:**
+
+- "Open a Falcon Complete case asking whether this detection is a false positive"
+
+### `falcon_add_message_center_case_comment`
+
+**Required scopes:** `Message Center:write`
+
+Post a comment on a Message Center case, as a reply to Falcon Complete or Support.
+
+Use this to answer a question the Falcon Complete team asked on a case or to
+add information to a case. CrowdStrike analysts see the comment and it cannot
+be withdrawn, so confirm the wording with the user first. Only comments can be
+added through the API. Returns the API's response for the new activity.
+
+**Example prompts:**
+
+- "Reply on case CS-12345 that the host has been reimaged"
+
+### `falcon_add_message_center_case_attachment`
+
+**Required scopes:** `Message Center:write`
+
+Attach a file to a Message Center case for Falcon Complete or Support.
+
+Use this to give CrowdStrike analysts a screenshot, log extract or document
+on a case. They see the file and it cannot be removed, so confirm with the
+user what is being shared first. Returns the API's response for the upload.
+
+**Example prompts:**
+
+- "Attach these triage notes to the Falcon Complete case"
 
 ## Resources
 
