@@ -4,7 +4,7 @@
 
 ### Features
 
-* **falcon complete:** new read-only Falcon Complete module: search and get Message Center cases, read a case's message thread, and count cases or Falcon Complete dashboard data (escalations, remediations, blocklist and allowlist requests, alerts)
+* **falcon complete:** new read-only Falcon Complete module: search and get Message Center cases, read a case's message thread, and count cases or Falcon Complete dashboard data (escalations, remediations, blocklist and allowlist requests, alerts) ([#21](https://github.com/GTStagg/eyas-mcp/pull/21))
 * **host groups:** `falcon_perform_host_group_action` takes `device_ids` as a safer alternative to `filter` (exactly one is required), accepts only `add-hosts` or `remove-hosts`, and refuses dynamic or unknown target groups before changing anything ([#14](https://github.com/GTStagg/eyas-mcp/pull/14))
 * **host groups:** new read-only `falcon_get_host_groups` tool returns host groups by ID with an explicit `not_found` list ([#14](https://github.com/GTStagg/eyas-mcp/pull/14))
 * **host groups:** `falcon_search_host_groups` takes `exact_name` to find a group by its exact, case-sensitive name, since FQL name matching is unreliable for names with spaces or hyphens ([#14](https://github.com/GTStagg/eyas-mcp/pull/14))
