@@ -21,6 +21,23 @@ API_SCOPE_REQUIREMENTS = {
     "PostDeviceDetailsV2": ["Hosts:read"],
     "UpdateDeviceTags": ["Hosts:write"],
     "PerformActionV2": ["Hosts:write"],
+    # Falcon Complete: Message Center
+    "QueryCasesIdsByFilter": ["Message Center:read"],
+    "GetCaseEntitiesByIDs": ["Message Center:read"],
+    "QueryActivityByCaseID": ["Message Center:read"],
+    "GetCaseActivityByIds": ["Message Center:read"],
+    "AggregateCases": ["Message Center:read"],
+    # Falcon Complete: dashboards
+    "QueryAlertIdsByFilter": ["Falcon Complete Dashboards:read"],
+    "AggregateAlerts": ["Falcon Complete Dashboards:read"],
+    "QueryEscalationsFilter": ["Falcon Complete Dashboards:read"],
+    "AggregateEscalations": ["Falcon Complete Dashboards:read"],
+    "QueryRemediationsFilter": ["Falcon Complete Dashboards:read"],
+    "AggregateRemediations": ["Falcon Complete Dashboards:read"],
+    "QueryBlockListFilter": ["Falcon Complete Dashboards:read"],
+    "AggregateBlockList": ["Falcon Complete Dashboards:read"],
+    "QueryAllowListFilter": ["Falcon Complete Dashboards:read"],
+    "AggregateAllowList": ["Falcon Complete Dashboards:read"],
     # Host Groups operations
     "queryCombinedHostGroups": ["Host Groups:read"],
     "queryCombinedGroupMembers": ["Host Groups:read"],

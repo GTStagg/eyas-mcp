@@ -17,6 +17,7 @@ eyas-mcp provides the following modules. Each module requires specific CrowdStri
 | [Detections](detections.md) | `Alerts:read`, `Alerts:write` | Accessing and analyzing CrowdStrike Falcon detections |
 | [Discover](discover.md) | `Assets:read` | Accessing and managing CrowdStrike Falcon Discover applications, managed assets, unmanaged assets, and accounts |
 | [Exclusions](exclusions.md) | `IOA Exclusions:read`, `Machine Learning Exclusions:read`, `Sensor Visibility Exclusions:read`, `IOA Exclusions:write`, `Machine Learning Exclusions:write`, `Sensor Visibility Exclusions:write` | This module provides a unified set of tools for managing CrowdStrike exclusions across four types — IOA, Machine Learning, Sensor Visibility, and Certificate-Based — behind a single `exclusion_type` discriminator |
+| [Falcon Complete](falcon-complete.md) | `Falcon Complete Dashboards:read`, `Message Center:read` | This module provides read-only tools for Falcon Complete: Message Center cases and their activity threads, and the counts behind the Falcon Complete dashboard |
 | [Firewall Management](firewall.md) | `Firewall Management:read`, `Firewall Management:write` | Searching and managing firewall rules and rule groups |
 | [Fusion SOAR](fusion.md) | `Workflows:read`, `Workflows:write` | Searching Fusion SOAR workflow definitions and executions, reading what an execution produced, and running an on-demand workflow |
 | [Guardian](guardian.md) | `AIDR:read` | Provides tools for querying AI agent inventory and activity data |

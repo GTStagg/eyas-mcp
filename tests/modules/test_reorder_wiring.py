@@ -48,6 +48,7 @@ from falcon_mcp.modules.data_security import DataSecurityModule
 from falcon_mcp.modules.detections import DetectionsModule
 from falcon_mcp.modules.discover import DiscoverModule
 from falcon_mcp.modules.exclusions import ExclusionsModule
+from falcon_mcp.modules.falcon_complete import FalconCompleteModule
 from falcon_mcp.modules.firewall import FirewallModule
 from falcon_mcp.modules.host_groups import HostGroupsModule
 from falcon_mcp.modules.hosts import HostsModule
@@ -161,6 +162,21 @@ CASES: list[ReorderCase] = [
         method="search_quarantined_files",
         id_field="id",
         site=("falcon_mcp/modules/quarantine.py", "search_quarantined_files"),
+    ),
+    ReorderCase(
+        tool="falcon_search_message_center_cases",
+        module_cls=FalconCompleteModule,
+        method="search_message_center_cases",
+        id_field="id",
+        site=("falcon_mcp/modules/falcon_complete.py", "search_message_center_cases"),
+    ),
+    ReorderCase(
+        tool="falcon_get_message_center_case_activities",
+        module_cls=FalconCompleteModule,
+        method="get_message_center_case_activities",
+        id_field="id",
+        kwargs={"case_id": "Abc123Def4567"},
+        site=("falcon_mcp/modules/falcon_complete.py", "get_message_center_case_activities"),
     ),
     ReorderCase(
         tool="falcon_search_sessions",
@@ -340,6 +356,15 @@ CASES: list[ReorderCase] = [
         query_patch=None,
         site=("falcon_mcp/modules/cloud/cloud_insights.py", "get_cloud_asset_insights"),
     ),
+    ReorderCase(
+        tool="falcon_get_message_center_cases",
+        module_cls=FalconCompleteModule,
+        method="get_message_center_cases",
+        id_field="id",
+        kwargs={"ids": ORDERED_IDS},
+        query_patch=None,
+        site=("falcon_mcp/modules/falcon_complete.py", "get_message_center_cases"),
+    ),
     # --- Sites whose query step is _base_search_api_call (no pagination tuple) ---
     ReorderCase(
         tool="falcon_list_case_templates",
@@ -468,9 +493,11 @@ def _resolve_kwargs(method: Any, supplied: dict[str, Any]) -> dict[str, Any]:
 def _extract_rows(result: Any) -> list[dict[str, Any]]:
     """Pull the ordered record list out of a tool result.
 
-    Search tools return the pagination envelope; a few sites return the reordered list
-    directly.
+    Search tools return the pagination envelope, get-by-ID tools a `found`/`not_found`
+    split, and a few sites return the reordered list directly.
     """
+    if isinstance(result, dict) and "found" in result:
+        return result["found"]
     if isinstance(result, dict):
         assert "results" in result, f"unexpected dict result: {sorted(result)}"
         return result["results"]
