@@ -37,7 +37,7 @@ See the [`docs/`](docs/overview.md) folder for configuration, usage and module r
 | [Detections](docs/modules/detections.md) | Find, aggregate, analyze, and update detections, and close every open detection on a host, including Next-Gen SIEM correlation alerts |
 | [Discover](docs/modules/discover.md) | Search or list the full application inventory, search assets of every entity type (managed, unmanaged and unsupported) with per-type totals, including drive encryption and system-insights posture, and search local and Active Directory accounts |
 | [Exclusions](docs/modules/exclusions.md) | Search, create, update, and delete IOA, machine learning, sensor visibility, and certificate-based exclusions |
-| [Falcon Complete](docs/modules/falcon-complete.md) | Read Message Center cases and their message threads, and count Falcon Complete escalations, remediations, blocklist and allowlist requests and alerts |
+| [Falcon Complete](docs/modules/falcon-complete.md) | Read Message Center cases and their message threads, open cases, reply and attach files, and count Falcon Complete escalations, remediations, blocklist and allowlist requests and alerts |
 | [Firewall Management](docs/modules/firewall.md) | Search and manage firewall rules and rule groups |
 | [Fusion SOAR](docs/modules/fusion.md) | Search Fusion SOAR workflow definitions and executions, list workflow triggers, read execution results, and run on-demand workflows |
 | [Guardian](docs/modules/guardian.md) | Monitor AI agent activity, sessions, tool and skill usage, and inventory; fetch records by ID; and rank tool and skill calls across the fleet |

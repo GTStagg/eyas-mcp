@@ -1,18 +1,22 @@
 """
 Falcon Complete module for Falcon MCP Server
 
-This module provides read-only tools for Falcon Complete: Message Center cases and their
-activity threads, and the counts behind the Falcon Complete dashboard.
+This module provides tools for Falcon Complete: reading Message Center cases, their
+activity threads and the counts behind the Falcon Complete dashboard, and opening cases,
+commenting on them and attaching files.
 """
 
+import base64
+import binascii
 import re
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from mcp.server import FastMCP
 from mcp.server.fastmcp.resources import TextResource
+from mcp.types import ToolAnnotations
 from pydantic import AnyUrl, Field
 
-from falcon_mcp.common.errors import _format_error_response
+from falcon_mcp.common.errors import _format_error_response, handle_api_response
 from falcon_mcp.common.logging import get_logger
 from falcon_mcp.common.utils import unwrap_field_default
 from falcon_mcp.modules.base import BaseModule
@@ -38,6 +42,34 @@ DashboardDataset = Literal["alerts", "escalations", "remediations", "blocklist",
 # Written into the aggregate body, so only a plain dotted field name is accepted.
 _FIELD_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_.]{0,63}")
 Interval = Literal["day", "week", "month", "year"]
+
+# Message Center writes reach CrowdStrike analysts, so every argument is checked before
+# the call. The rules follow CrowdStrike's own SDKs (PSFalcon and FalconPy).
+CaseType = Literal[
+    "fc:detection-support", "fc:contact", "fc:falcon-product-support", "fc:incident-support"
+]
+USER_UUID_PATTERN = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+INCIDENT_ID_PATTERN = re.compile(r"inc:[0-9a-fA-F]{32}:[0-9a-fA-F]{32}")
+# Legacy `ldt:` detection IDs and composite alert IDs; the API decides which it accepts.
+DETECTION_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9:_-]{0,255}")
+MAX_LINKED_IDS = 100
+MAX_TITLE_LENGTH = 255
+MAX_CONTENT_LENGTH = 100_000
+ATTACHMENT_NAME_PATTERN = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,254}")
+ATTACHMENT_EXTENSIONS = frozenset(
+    {"png", "bmp", "jpg", "jpeg", "gif", "pdf", "doc", "docx", "xls", "xlsx", "pptx", "txt", "csv"}
+)
+MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024
+# A write that sends a message to CrowdStrike: it changes nothing that already exists,
+# but cannot be taken back and repeats if retried.
+MESSAGE_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=False,
+    openWorldHint=True,
+)
 
 
 class FalconCompleteModule(BaseModule):
@@ -88,6 +120,24 @@ class FalconCompleteModule(BaseModule):
             server=server,
             method=self.aggregate_complete_dashboard,
             name="aggregate_complete_dashboard",
+        )
+        self._add_tool(
+            server=server,
+            method=self.create_message_center_case,
+            name="create_message_center_case",
+            annotations=MESSAGE_ANNOTATIONS,
+        )
+        self._add_tool(
+            server=server,
+            method=self.add_message_center_case_comment,
+            name="add_message_center_case_comment",
+            annotations=MESSAGE_ANNOTATIONS,
+        )
+        self._add_tool(
+            server=server,
+            method=self.add_message_center_case_attachment,
+            name="add_message_center_case_attachment",
+            annotations=MESSAGE_ANNOTATIONS,
         )
 
     def register_resources(self, server: FastMCP) -> None:
@@ -416,6 +466,287 @@ class FalconCompleteModule(BaseModule):
         response["field"] = field
         response["buckets"] = self._buckets(result)
         return response
+
+    def create_message_center_case(
+        self,
+        case_type: CaseType = Field(
+            description=(
+                "What the case is about: `fc:detection-support` (questions about "
+                "detections, give `detection_ids`), `fc:incident-support` (give "
+                "`incident_ids`), `fc:falcon-product-support`, or `fc:contact` "
+                "(anything else for the Falcon Complete team)."
+            ),
+        ),
+        title: str = Field(description="Case title, at most 255 characters."),
+        content: str = Field(description="The message to CrowdStrike: the case body."),
+        user_uuid: str = Field(
+            description=(
+                "UUID of the Falcon console user the case is opened as. A case's "
+                "`assigner.uuid`, or an activity's `created_by.uuid`, gives the UUID of "
+                "a user who has written in Message Center before."
+            ),
+        ),
+        detection_ids: list[str] | None = Field(
+            default=None,
+            description=(
+                "Detection or alert IDs to link, for `fc:detection-support` only. At "
+                "most 100."
+            ),
+        ),
+        incident_ids: list[str] | None = Field(
+            default=None,
+            description=(
+                "Incident IDs (inc:<32 hex>:<32 hex>) to link, for "
+                "`fc:incident-support` only. At most 100."
+            ),
+        ),
+    ) -> dict[str, Any] | list[Any]:
+        """Open a Message Center case with Falcon Complete or CrowdStrike Support.
+
+        Use this to ask the Falcon Complete team about a detection or incident, or to
+        raise a product question. This sends a message to CrowdStrike analysts, who
+        will see and act on it, and it cannot be withdrawn, so confirm the wording
+        with the user first. Returns the API's response for the new case.
+        """
+        case_type = unwrap_field_default(case_type)
+        title = unwrap_field_default(title)
+        content = unwrap_field_default(content)
+        user_uuid = unwrap_field_default(user_uuid)
+        detection_ids = unwrap_field_default(detection_ids)
+        incident_ids = unwrap_field_default(incident_ids)
+        operation = "CreateCaseV2"
+
+        if case_type not in get_args(CaseType):
+            return _format_error_response(
+                f"Invalid case_type: must be one of {', '.join(get_args(CaseType))}.",
+                operation=operation,
+            )
+        error = self._check_text("title", title, MAX_TITLE_LENGTH, operation)
+        error = error or self._check_text("content", content, MAX_CONTENT_LENGTH, operation)
+        error = error or self._check_user_uuid(user_uuid, operation)
+        if error:
+            return error
+
+        body: dict[str, Any] = {
+            "type": case_type,
+            "title": title.strip(),
+            "body": content,
+            "user_uuid": user_uuid,
+        }
+        for key, ids, pattern, wanted in (
+            ("detections", detection_ids, DETECTION_ID_PATTERN, "fc:detection-support"),
+            ("incidents", incident_ids, INCIDENT_ID_PATTERN, "fc:incident-support"),
+        ):
+            if ids is None or ids == []:
+                continue
+            if case_type != wanted:
+                return _format_error_response(
+                    f"`{key[:-1]}_ids` can only be given with case_type '{wanted}'.",
+                    operation=operation,
+                )
+            checked = self._check_ids(key[:-1] + "_ids", ids, pattern, operation)
+            if isinstance(checked, dict):
+                return checked
+            body[key] = [{"id": i} for i in checked]
+
+        response = self.client.command(operation, body=body)
+        return handle_api_response(
+            response,
+            operation=operation,
+            error_message="Failed to create Message Center case",
+            default_result=[],
+        )
+
+    def add_message_center_case_comment(
+        self,
+        case_id: str = Field(
+            description="The Message Center case ID, from falcon_search_message_center_cases.",
+        ),
+        content: str = Field(description="The comment to post on the case."),
+        user_uuid: str = Field(
+            description=(
+                "UUID of the Falcon console user the comment is posted as. A case's "
+                "`assigner.uuid`, or an activity's `created_by.uuid`, gives the UUID of "
+                "a user who has written in Message Center before."
+            ),
+        ),
+    ) -> dict[str, Any] | list[Any]:
+        """Post a comment on a Message Center case, as a reply to Falcon Complete or Support.
+
+        Use this to answer a question the Falcon Complete team asked on a case or to
+        add information to a case. CrowdStrike analysts see the comment and it cannot
+        be withdrawn, so confirm the wording with the user first. Only comments can be
+        added through the API. Returns the API's response for the new activity.
+        """
+        case_id = unwrap_field_default(case_id)
+        content = unwrap_field_default(content)
+        user_uuid = unwrap_field_default(user_uuid)
+        operation = "CaseAddActivity"
+
+        error = self._check_case_id(case_id, operation)
+        error = error or self._check_text("content", content, MAX_CONTENT_LENGTH, operation)
+        error = error or self._check_user_uuid(user_uuid, operation)
+        if error:
+            return error
+
+        response = self.client.command(
+            operation,
+            body={
+                "case_id": case_id.strip(),
+                "type": "comment",
+                "body": content,
+                "user_uuid": user_uuid,
+            },
+        )
+        return handle_api_response(
+            response,
+            operation=operation,
+            error_message="Failed to add a comment to the Message Center case",
+            default_result=[],
+        )
+
+    def add_message_center_case_attachment(
+        self,
+        case_id: str = Field(
+            description="The Message Center case ID, from falcon_search_message_center_cases.",
+        ),
+        file_name: str = Field(
+            description=(
+                "File name for the attachment, such as 'triage-notes.txt'. Letters, "
+                "digits, '.', '_' and '-' only, starting with a letter, digit, '_' or "
+                "'-'. Extension must be one of png, bmp, jpg, jpeg, gif, pdf, doc, docx, "
+                "xls, xlsx, pptx, txt or csv."
+            ),
+            examples=["triage-notes.txt"],
+        ),
+        content_base64: str = Field(
+            description=(
+                "The file's content, base64-encoded. Under 15 MB once decoded. Only "
+                "content passed here is sent: the server never reads files from its own "
+                "disk."
+            ),
+        ),
+        user_uuid: str = Field(
+            description=(
+                "UUID of the Falcon console user the file is attached as. A case's "
+                "`assigner.uuid`, or an activity's `created_by.uuid`, gives the UUID of "
+                "a user who has written in Message Center before."
+            ),
+        ),
+    ) -> dict[str, Any] | list[Any]:
+        """Attach a file to a Message Center case for Falcon Complete or Support.
+
+        Use this to give CrowdStrike analysts a screenshot, log extract or document
+        on a case. They see the file and it cannot be removed, so confirm with the
+        user what is being shared first. Returns the API's response for the upload.
+        """
+        case_id = unwrap_field_default(case_id)
+        file_name = unwrap_field_default(file_name)
+        content_base64 = unwrap_field_default(content_base64)
+        user_uuid = unwrap_field_default(user_uuid)
+        operation = "CaseAddAttachment"
+
+        error = self._check_case_id(case_id, operation)
+        error = error or self._check_user_uuid(user_uuid, operation)
+        if error:
+            return error
+        if not isinstance(file_name, str) or not ATTACHMENT_NAME_PATTERN.fullmatch(file_name):
+            return _format_error_response(
+                "Invalid file_name: use letters, digits, '.', '_' and '-' only, starting "
+                "with a letter, digit, '_' or '-', at most 255 characters.",
+                operation=operation,
+            )
+        extension = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+        if extension not in ATTACHMENT_EXTENSIONS:
+            return _format_error_response(
+                "Invalid file_name: the extension must be one of "
+                f"{', '.join(sorted(ATTACHMENT_EXTENSIONS))}.",
+                operation=operation,
+            )
+        if not isinstance(content_base64, str) or not content_base64.strip():
+            return _format_error_response(
+                "content_base64 must hold the file's content, base64-encoded.",
+                operation=operation,
+            )
+        # Reject oversized input before decoding it: base64 is 4 characters per 3 bytes.
+        if len(content_base64) > (MAX_ATTACHMENT_BYTES // 3 + 1) * 4 + 1024:
+            return _format_error_response(
+                "The attachment must be under 15 MB.", operation=operation
+            )
+        try:
+            data = base64.b64decode("".join(content_base64.split()), validate=True)
+        except (binascii.Error, ValueError):
+            return _format_error_response(
+                "content_base64 is not valid base64.", operation=operation
+            )
+        if not data:
+            return _format_error_response("The attachment is empty.", operation=operation)
+        if len(data) >= MAX_ATTACHMENT_BYTES:
+            return _format_error_response(
+                "The attachment must be under 15 MB.", operation=operation
+            )
+
+        response = self.client.command(
+            operation,
+            data={"case_id": case_id.strip(), "user_uuid": user_uuid},
+            files=[("file", (file_name, data))],
+        )
+        return handle_api_response(
+            response,
+            operation=operation,
+            error_message="Failed to attach the file to the Message Center case",
+            default_result=[],
+        )
+
+    @staticmethod
+    def _check_text(name: str, value: Any, max_length: int, operation: str) -> dict[str, Any] | None:
+        if not isinstance(value, str) or not value.strip():
+            return _format_error_response(f"`{name}` must not be empty.", operation=operation)
+        if len(value) > max_length:
+            return _format_error_response(
+                f"`{name}` must be at most {max_length} characters; got {len(value)}.",
+                operation=operation,
+            )
+        return None
+
+    @staticmethod
+    def _check_user_uuid(value: Any, operation: str) -> dict[str, Any] | None:
+        if not isinstance(value, str) or not USER_UUID_PATTERN.fullmatch(value):
+            return _format_error_response(
+                "Invalid user_uuid: must be a Falcon user UUID such as "
+                "'01234567-89ab-cdef-0123-456789abcdef'.",
+                operation=operation,
+            )
+        return None
+
+    @staticmethod
+    def _check_case_id(value: Any, operation: str) -> dict[str, Any] | None:
+        if not isinstance(value, str) or not CASE_ID_PATTERN.fullmatch(value.strip()):
+            return _format_error_response(
+                "Invalid case_id: use the `id` of a case from "
+                "falcon_search_message_center_cases.",
+                operation=operation,
+            )
+        return None
+
+    @staticmethod
+    def _check_ids(
+        name: str, ids: Any, pattern: re.Pattern[str], operation: str
+    ) -> list[str] | dict[str, Any]:
+        if not isinstance(ids, list):
+            return _format_error_response(f"`{name}` must be a list.", operation=operation)
+        unique = list(dict.fromkeys(str(i).strip() for i in ids))
+        bad = [i for i in unique if not pattern.fullmatch(i)]
+        if bad:
+            return _format_error_response(
+                f"These `{name}` are not valid: {', '.join(bad[:10])}", operation=operation
+            )
+        if len(unique) > MAX_LINKED_IDS:
+            return _format_error_response(
+                f"At most {MAX_LINKED_IDS} `{name}` can be linked; got {len(unique)}.",
+                operation=operation,
+            )
+        return unique
 
     def _spec(
         self, field: Any, filter: Any, interval: Any, size: Any

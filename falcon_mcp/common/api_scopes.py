@@ -27,6 +27,9 @@ API_SCOPE_REQUIREMENTS = {
     "QueryActivityByCaseID": ["Message Center:read"],
     "GetCaseActivityByIds": ["Message Center:read"],
     "AggregateCases": ["Message Center:read"],
+    "CreateCaseV2": ["Message Center:write"],
+    "CaseAddActivity": ["Message Center:write"],
+    "CaseAddAttachment": ["Message Center:write"],
     # Falcon Complete: dashboards
     "QueryAlertIdsByFilter": ["Falcon Complete Dashboards:read"],
     "AggregateAlerts": ["Falcon Complete Dashboards:read"],

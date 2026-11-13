@@ -29,6 +29,10 @@ from falcon_mcp.server import FalconMCPServer
 # tenant state. The test enforces bidirectional correctness: new mutating tools
 # not in this set fail, AND stale entries (deleted/reverted tools) also fail.
 MUTATING_TOOL_ALLOWLIST: set[str] = {
+    # falcon complete module (messages to CrowdStrike analysts)
+    "falcon_create_message_center_case",
+    "falcon_add_message_center_case_comment",
+    "falcon_add_message_center_case_attachment",
     # ioc module
     "falcon_add_ioc",
     "falcon_remove_iocs",

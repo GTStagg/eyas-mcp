@@ -2,19 +2,34 @@
 Tests for the Falcon Complete module.
 """
 
+import base64
 import unittest
+
+from mcp.types import ToolAnnotations
 
 from falcon_mcp.modules.base import READ_ONLY_ANNOTATIONS
 from falcon_mcp.modules.falcon_complete import FalconCompleteModule
 from tests.modules.utils.test_modules import TestModules
 
-TOOLS = [
+READ_TOOLS = [
     "falcon_search_message_center_cases",
     "falcon_get_message_center_cases",
     "falcon_get_message_center_case_activities",
     "falcon_aggregate_message_center_cases",
     "falcon_aggregate_complete_dashboard",
 ]
+WRITE_TOOLS = [
+    "falcon_create_message_center_case",
+    "falcon_add_message_center_case_comment",
+    "falcon_add_message_center_case_attachment",
+]
+MESSAGE_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
+)
+USER = "01234567-89ab-cdef-0123-456789abcdef"
+CASE_ID = "Abc123Def4567"
+INCIDENT = "inc:" + "a" * 32 + ":" + "b" * 32
+DETECTION = "ldt:" + "c" * 32 + ":12345"
 
 
 def _ok(resources, total=None):
@@ -38,14 +53,17 @@ class TestFalconCompleteModule(TestModules):
         return [(c.args[0], c.kwargs) for c in self.mock_client.command.call_args_list]
 
     def test_register_tools(self):
-        self.assert_tools_registered(TOOLS)
-        self.assertEqual(len(self.module.tools), 5)
+        self.assert_tools_registered(READ_TOOLS + WRITE_TOOLS)
+        self.assertEqual(len(self.module.tools), 8)
 
-    def test_every_tool_is_read_only(self):
+    def test_tool_annotations(self):
         self.module.register_tools(self.mock_server)
-        for name in TOOLS:
+        for name in READ_TOOLS:
             with self.subTest(tool=name):
                 self.assert_tool_annotations(name, READ_ONLY_ANNOTATIONS)
+        for name in WRITE_TOOLS:
+            with self.subTest(tool=name):
+                self.assert_tool_annotations(name, MESSAGE_ANNOTATIONS)
 
     def test_register_resources(self):
         self.assert_resources_registered(["falcon_search_message_center_cases_fql_guide"])
@@ -310,6 +328,162 @@ class TestFalconCompleteModule(TestModules):
                 result = self.module.aggregate_complete_dashboard(dataset="alerts", **kwargs)
                 self.assertIn("error", result)
         self.mock_client.command.assert_not_called()
+
+    # --- Writes: every call is mocked; none reaches a tenant ------------------------
+
+    def test_create_case_sends_the_documented_body(self):
+        self.mock_client.command.return_value = _ok([{"id": "NewCase12345"}])
+
+        result = self.module.create_message_center_case(
+            case_type="fc:incident-support",
+            title="  Lateral movement on WS-01  ",
+            content="Please investigate.",
+            user_uuid=USER,
+            incident_ids=[INCIDENT, INCIDENT],
+        )
+
+        self.assertEqual(result, [{"id": "NewCase12345"}])
+        self.assertEqual(
+            self._calls(),
+            [
+                (
+                    "CreateCaseV2",
+                    {
+                        "body": {
+                            "type": "fc:incident-support",
+                            "title": "Lateral movement on WS-01",
+                            "body": "Please investigate.",
+                            "user_uuid": USER,
+                            "incidents": [{"id": INCIDENT}],
+                        }
+                    },
+                )
+            ],
+        )
+
+    def test_create_case_links_detections_to_detection_support(self):
+        self.mock_client.command.return_value = _ok([{"id": "NewCase12345"}])
+
+        self.module.create_message_center_case(
+            case_type="fc:detection-support",
+            title="Is this a false positive?",
+            content="See the linked detection.",
+            user_uuid=USER,
+            detection_ids=[DETECTION],
+        )
+
+        self.assertEqual(self._calls()[0][1]["body"]["detections"], [{"id": DETECTION}])
+
+    def test_create_case_rejects_bad_input_without_calling_the_api(self):
+        base = {
+            "case_type": "fc:contact",
+            "title": "Question",
+            "content": "Hello",
+            "user_uuid": USER,
+            "detection_ids": None,
+            "incident_ids": None,
+        }
+        for change in (
+            {"case_type": "fc:other"},
+            {"title": "   "},
+            {"title": "x" * 256},
+            {"content": ""},
+            {"user_uuid": "not-a-uuid"},
+            {"detection_ids": [DETECTION]},
+            {"incident_ids": [INCIDENT]},
+            {"case_type": "fc:incident-support", "incident_ids": ["inc:bad"]},
+            {"case_type": "fc:detection-support", "detection_ids": ["bad id'"]},
+            {"case_type": "fc:detection-support", "detection_ids": [f"d{n}" for n in range(101)]},
+        ):
+            with self.subTest(change=str(change)[:60]):
+                result = self.module.create_message_center_case(**{**base, **change})
+                self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()
+
+    def test_comment_sends_a_comment_activity(self):
+        self.mock_client.command.return_value = _ok([{"id": "act1"}])
+
+        result = self.module.add_message_center_case_comment(
+            case_id=CASE_ID, content="Confirmed, please block it.", user_uuid=USER
+        )
+
+        self.assertEqual(result, [{"id": "act1"}])
+        self.assertEqual(
+            self._calls(),
+            [
+                (
+                    "CaseAddActivity",
+                    {
+                        "body": {
+                            "case_id": CASE_ID,
+                            "type": "comment",
+                            "body": "Confirmed, please block it.",
+                            "user_uuid": USER,
+                        }
+                    },
+                )
+            ],
+        )
+
+    def test_comment_rejects_bad_input_without_calling_the_api(self):
+        for kwargs in (
+            {"case_id": "x;y", "content": "hi", "user_uuid": USER},
+            {"case_id": CASE_ID, "content": " ", "user_uuid": USER},
+            {"case_id": CASE_ID, "content": "hi", "user_uuid": "nope"},
+        ):
+            with self.subTest(kwargs=kwargs):
+                self.assertIn("error", self.module.add_message_center_case_comment(**kwargs))
+        self.mock_client.command.assert_not_called()
+
+    def test_attachment_uploads_decoded_bytes_as_multipart(self):
+        self.mock_client.command.return_value = _ok([{"id": "att1"}])
+        content = b"line one\nline two\n"
+
+        result = self.module.add_message_center_case_attachment(
+            case_id=CASE_ID,
+            file_name="triage-notes.txt",
+            content_base64=base64.b64encode(content).decode(),
+            user_uuid=USER,
+        )
+
+        self.assertEqual(result, [{"id": "att1"}])
+        operation, kwargs = self._calls()[0]
+        self.assertEqual(operation, "CaseAddAttachment")
+        self.assertEqual(kwargs["data"], {"case_id": CASE_ID, "user_uuid": USER})
+        self.assertEqual(kwargs["files"], [("file", ("triage-notes.txt", content))])
+
+    def test_attachment_rejects_bad_input_without_calling_the_api(self):
+        good = base64.b64encode(b"data").decode()
+        base = {"case_id": CASE_ID, "file_name": "a.txt", "content_base64": good, "user_uuid": USER}
+        oversized = base64.b64encode(bytes(15 * 1024 * 1024)).decode()
+        for change in (
+            {"file_name": "../etc/passwd.txt"},
+            {"file_name": ".hidden.txt"},
+            {"file_name": "script.ps1"},
+            {"file_name": "noextension"},
+            {"file_name": "a" * 252 + ".txt"},
+            {"content_base64": "not base64!"},
+            {"content_base64": ""},
+            {"content_base64": oversized},
+            {"user_uuid": "x"},
+            {"case_id": ""},
+        ):
+            with self.subTest(change=str(change)[:60]):
+                result = self.module.add_message_center_case_attachment(**{**base, **change})
+                self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()
+
+    def test_write_api_errors_are_returned(self):
+        self.mock_client.command.return_value = {
+            "status_code": 403,
+            "body": {"errors": [{"code": 403, "message": "access denied, scope not permitted"}]},
+        }
+
+        result = self.module.add_message_center_case_comment(
+            case_id=CASE_ID, content="hi", user_uuid=USER
+        )
+
+        self.assertIn("error", result)
 
     def test_dashboard_api_error_is_returned(self):
         self.mock_client.command.return_value = {

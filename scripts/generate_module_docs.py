@@ -571,6 +571,15 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
         "How many escalations has Falcon Complete raised, by severity?",
         "How many blocklist requests were made each month?",
     ],
+    "falcon_create_message_center_case": [
+        "Open a Falcon Complete case asking whether this detection is a false positive",
+    ],
+    "falcon_add_message_center_case_comment": [
+        "Reply on case CS-12345 that the host has been reimaged",
+    ],
+    "falcon_add_message_center_case_attachment": [
+        "Attach these triage notes to the Falcon Complete case",
+    ],
     # Sensor Usage
     "falcon_search_sensor_usage": [
         "Show me sensor usage data for the week of 2024-06-11",
