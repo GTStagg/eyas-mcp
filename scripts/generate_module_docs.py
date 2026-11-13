@@ -47,6 +47,10 @@ MODULE_METADATA: dict[str, dict[str, Any]] = {
     "datasecurity": {
         "slug": "data-security",
     },
+    "falconcomplete": {
+        "title": "Falcon Complete",
+        "slug": "falcon-complete",
+    },
     "fusion": {
         "title": "Fusion SOAR",
     },
@@ -546,6 +550,26 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
     ],
     "falcon_download_report_execution": [
         "Download the results for report execution abc123",
+    ],
+    # Falcon Complete
+    "falcon_search_message_center_cases": [
+        "Show the Falcon Complete cases updated this week",
+        "Which Message Center cases mention host WS-0042?",
+    ],
+    "falcon_get_message_center_cases": [
+        "Has the status of these three Message Center cases changed?",
+    ],
+    "falcon_get_message_center_case_activities": [
+        "What did the Falcon Complete team write on case CS-12345?",
+        "Show only the comments on this case, newest first",
+    ],
+    "falcon_aggregate_message_center_cases": [
+        "How many Message Center cases are there of each type?",
+        "How many cases were opened per month this year?",
+    ],
+    "falcon_aggregate_complete_dashboard": [
+        "How many escalations has Falcon Complete raised, by severity?",
+        "How many blocklist requests were made each month?",
     ],
     # Sensor Usage
     "falcon_search_sensor_usage": [

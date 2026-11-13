@@ -27,8 +27,16 @@ HTTP_VERBS = {endpoint[0]: endpoint[1] for endpoint in api_endpoints}
 # add one only after confirming the operation can't change tenant state.
 READS_USING_WRITE_VERBS = frozenset(
     {
+        "AggregateAlerts",
+        "AggregateAllowList",
+        "AggregateBlockList",
+        "AggregateCases",
+        "AggregateEscalations",
         "AggregateNotificationsExposedDataRecordsV1",
         "AggregateNotificationsV1",
+        "AggregateRemediations",
+        "GetCaseActivityByIds",
+        "GetCaseEntitiesByIDs",
         "GetQuarantineFiles",
         "GetSensorDetails",
         "PostAggregatesAlertsV2",

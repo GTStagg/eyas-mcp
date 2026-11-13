@@ -330,6 +330,23 @@ FILTER_HINTS: dict[str, str] = {
         "certificate: name (use :* wildcard), created_by, modified_by. "
         "Date filters: created_on:>'now-7d' (relative)."
     ),
+    # === Falcon Complete ===
+    "falcon_search_message_center_cases": (
+        "Fields need the case. prefix: case.status and case.type (numeric codes, "
+        "e.g. case.status:'2'), case.key (CS- number), case.title, case.body, "
+        "case.created_time, case.last_modified_time (UTC datetime), case.aids, "
+        "case.hosts, case.detections.id, case.assigner.display_name; activity.body "
+        "searches messages; _all is free text. Ex: case.created_time:>'2026-01-01'"
+    ),
+    "falcon_aggregate_message_center_cases": (
+        "Same fields as falcon_search_message_center_cases, with the case. prefix. "
+        "Ex: case.type:'10201'"
+    ),
+    "falcon_aggregate_complete_dashboard": (
+        "Fields depend on the dataset. alerts: severity, status, type, product, "
+        "platform_name, tactic, technique; escalations: severity, created_time; "
+        "blocklist: created_time."
+    ),
     # === Host Groups ===
     "falcon_search_host_groups": (
         "Common fields: name, group_type (static|dynamic|staticByID), "
