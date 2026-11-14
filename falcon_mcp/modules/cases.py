@@ -24,6 +24,10 @@ from falcon_mcp.resources.cases import (
 logger = get_logger(__name__)
 
 
+# Characters that would end or extend a quoted FQL value
+FQL_SPECIAL_CHARS = frozenset("'\"[],\\")
+
+
 def _is_filter_error(error: dict[str, Any]) -> bool:
     """Report whether an aggregate error blames the FQL filter.
 
@@ -920,6 +924,15 @@ class CasesModule(BaseModule):
         # which does. `ids` is still sent because the API marks it required.
         scoped_filter = filter
         if case_ids:
+            bad_ids = [i for i in case_ids if not i or set(i) & FQL_SPECIAL_CHARS]
+            if bad_ids:
+                return [
+                    _format_error_response(
+                        f"Invalid case_ids {bad_ids}: a case ID can't be empty or contain "
+                        "quotes, brackets, commas or backslashes.",
+                        operation="aggregates_file_details_post_v1",
+                    )
+                ]
             id_list = ",".join(f"'{case_id}'" for case_id in case_ids)
             scope = f"case_id:[{id_list}]"
             # The caller's filter is parenthesized so an OR inside it cannot

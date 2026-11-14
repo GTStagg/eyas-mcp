@@ -76,6 +76,14 @@ def _has_no_gateway_route(response: dict[str, Any]) -> bool:
     return any(GATEWAY_NO_ROUTE_MARKER in e.get("message", "").lower() for e in errors)
 
 
+def error_details(response: dict[str, Any]) -> dict[str, Any]:
+    """The parts of a failed FalconPy response worth returning: status code and body.
+
+    Response headers are left out; they add size, not diagnosis.
+    """
+    return {key: response[key] for key in ("status_code", "body") if key in response}
+
+
 def _format_error_response(
     message: str,
     details: dict[str, Any] | None = None,
@@ -135,7 +143,7 @@ def handle_api_response(
     status_code: int | None = response.get("status_code")
 
     if status_code is None or status_code >= 300:
-        details = response
+        details = error_details(response)
 
         if _has_no_gateway_route(response):
             # Leave out the gateway's text and body, which include the tenant's CID
@@ -160,9 +168,7 @@ def handle_api_response(
             if required_scopes:
                 status_message += f" Required scopes: {', '.join(required_scopes)}"
 
-        # Log the error
-        logger.error("Error: %s: %s", error_message, status_message)
-
+        # _format_error_response logs the message
         return _format_error_response(
             f"{error_message}: {status_message}", details=details, operation=operation
         )

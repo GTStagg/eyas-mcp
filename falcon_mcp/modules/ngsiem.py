@@ -71,7 +71,8 @@ MAX_ROWS_LIMIT = 10_000
 # operation never selected. A separator is what makes traversal possible, so once
 # those are rejected only a whole-value dot-segment can still alter the path —
 # `a..b` is inert and stays allowed.
-_UNSAFE_REPOSITORY_CHARS = ("/", "\\", "%")
+# `?` and `#` would end the path and start a query string or fragment.
+_UNSAFE_REPOSITORY_CHARS = ("/", "\\", "%", "?", "#")
 _DOT_SEGMENTS = (".", "..")
 
 # ListParsers accepts only this repository: parsers live in a dedicated repository
@@ -118,7 +119,7 @@ def _validate_repository(repository: Any) -> dict[str, Any] | None:
 
     if any(char in repository for char in _UNSAFE_REPOSITORY_CHARS) or repository in _DOT_SEGMENTS:
         return _format_error_response(
-            f"Invalid repository {repository!r}: must not contain '/', '\\', or '%', "
+            f"Invalid repository {repository!r}: must not contain '/', '\\', '%', '?' or '#', "
             "or be '.' or '..'. Pass a plain repository or view name, "
             "for example 'search-all'.",
             operation="StartSearchV1",

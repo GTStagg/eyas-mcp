@@ -32,6 +32,14 @@ GRAPHQL_ENUM_PATTERN = re.compile(r"[A-Z][A-Z0-9_]*")
 RISKY_ENTITY_TYPES = ("USER", "ENDPOINT")
 RISK_SEVERITIES = ("LOW", "MEDIUM", "HIGH")
 MAX_RISKY_IDENTITIES = 200
+# Timeline and relationship analysis make one GraphQL call per entity
+MAX_INVESTIGATION_ENTITY_IDS = 100
+INVESTIGATION_TYPES = (
+    "entity_details",
+    "timeline_analysis",
+    "relationship_analysis",
+    "risk_assessment",
+)
 
 # Entity fields read by search_risky_identities and correlate_host_identity
 IDENTITY_RISK_FIELDS = """
@@ -894,7 +902,7 @@ class IdpModule(BaseModule):
         # Entity Identification (Required - at least one)
         entity_ids: list[str] | None = Field(
             default=None,
-            description="List of specific entity IDs to investigate (e.g., ['entity-001'])",
+            description="List of specific entity IDs to investigate (e.g., ['entity-001']). At most 100.",
         ),
         entity_names: str | None = Field(
             default=None,
@@ -992,6 +1000,8 @@ class IdpModule(BaseModule):
         include_associations = unwrap_field_default(include_associations)
         include_accounts = unwrap_field_default(include_accounts)
         include_incidents = unwrap_field_default(include_incidents)
+        # Each repeat would rerun the same per-entity calls
+        investigation_types = list(dict.fromkeys(investigation_types))
 
         # Step 1: Validate inputs
         validation_error = self._validate_entity_identifiers(
@@ -1133,6 +1143,23 @@ class IdpModule(BaseModule):
                     "status": "failed",
                 },
             }
+
+        unknown_types = [t for t in investigation_types if t not in INVESTIGATION_TYPES]
+        if unknown_types:
+            return self._create_error_response(
+                f"Unknown investigation_types: {unknown_types}. "
+                f"Use: {', '.join(INVESTIGATION_TYPES)}.",
+                0,
+                investigation_types,
+            )
+
+        if entity_ids and len(entity_ids) > MAX_INVESTIGATION_ENTITY_IDS:
+            return self._create_error_response(
+                f"Too many entity_ids ({len(entity_ids)}). Investigate at most "
+                f"{MAX_INVESTIGATION_ENTITY_IDS} entities per call.",
+                0,
+                investigation_types,
+            )
 
         invalid_event_types = [
             event_type

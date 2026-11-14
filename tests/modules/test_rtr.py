@@ -1146,6 +1146,21 @@ class TestReadOnlyCommandOnHosts(TestModules):
                     self.assertIn("error", result)
         self.mock_client.command.assert_not_called()
 
+    def test_command_chaining_is_refused(self):
+        for command_string in (
+            "cat x; rm y",
+            "cat C:\\x & del C:\\y",
+            "reg query HKLM\\x | reg delete HKLM\\x",
+            "cat x > y",
+            "ls `whoami`",
+        ):
+            with self.subTest(command_string=command_string):
+                base = command_string.split()[0]
+                self.assertIsNotNone(rtr._validate_read_only_command(base, command_string))
+
+    def test_paths_with_dollar_signs_are_allowed(self):
+        self.assertIsNone(rtr._validate_read_only_command("ls", "ls C:\\$Recycle.Bin"))
+
     def test_reg_query_is_allowed(self):
         self.assertIsNone(
             rtr._validate_read_only_command("reg", "reg query HKLM\\Software\\Microsoft")

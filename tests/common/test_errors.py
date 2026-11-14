@@ -117,6 +117,20 @@ class TestErrorUtils(unittest.TestCase):
         )
         self.assertEqual(result, {"default": True})
 
+    def test_error_details_keep_status_and_body_but_not_headers(self):
+        response = {
+            "status_code": 429,
+            "headers": {"X-Ratelimit-Remaining": "0", "X-Cs-Traceid": "trace"},
+            "body": {"errors": [{"message": "Too many requests"}]},
+        }
+
+        result = handle_api_response(response, "TestOperation", error_message="Test failed")
+
+        self.assertEqual(
+            result["details"],
+            {"status_code": 429, "body": {"errors": [{"message": "Too many requests"}]}},
+        )
+
     def test_handle_api_response_error(self):
         """Test handle_api_response function with error response."""
         # Error response

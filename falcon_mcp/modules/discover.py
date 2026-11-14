@@ -533,7 +533,8 @@ class DiscoverModule(BaseModule):
 
         # Combine with user filter if provided
         if filter:
-            combined_filter = f"{base_filter}+{filter}"
+            # Parenthesized so an OR in the caller's filter cannot escape the scope
+            combined_filter = f"{base_filter}+({filter})"
         else:
             combined_filter = base_filter
 
@@ -607,7 +608,8 @@ class DiscoverModule(BaseModule):
 
         # Combine with user filter if provided
         if filter:
-            combined_filter = f"{base_filter}+{filter}"
+            # Parenthesized so an OR in the caller's filter cannot escape the scope
+            combined_filter = f"{base_filter}+({filter})"
         else:
             combined_filter = base_filter
 

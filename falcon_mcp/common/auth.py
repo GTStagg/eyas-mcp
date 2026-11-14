@@ -87,7 +87,8 @@ def auth_middleware(app: ASGIApp, api_key: str) -> ASGIApp:
         if scope["type"] == "http":
             request = Request(scope)
             provided_key = request.headers.get("x-api-key", "")
-            if not secrets.compare_digest(provided_key, api_key):
+            # Bytes, because compare_digest raises TypeError on non-ASCII str
+            if not secrets.compare_digest(provided_key.encode(), api_key.encode()):
                 response = JSONResponse({"error": "Unauthorized"}, status_code=401)
                 await response(scope, receive, send)
                 return

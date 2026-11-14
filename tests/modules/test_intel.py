@@ -562,6 +562,14 @@ class TestIntelModule(TestModules):
         self.assertIn("Actor not found", result[0]["error"])
         self.assertIn("NONEXISTENT ACTOR", result[0]["message"])
 
+    def test_get_mitre_report_rejects_quotes_in_actor_name(self):
+        """A quote would end the quoted FQL value and add clauses to the filter."""
+        for actor in ("x',name:*'*", "back\\slash"):
+            with self.subTest(actor=actor):
+                result = self.module.get_mitre_report(actor=actor, format="json")
+                self.assertIn("error", result[0])
+        self.mock_client.command.assert_not_called()
+
     def test_get_mitre_report_actor_search_error(self):
         """Test getting MITRE report when actor search returns an error."""
         # Setup mock response for actor search error

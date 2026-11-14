@@ -5,8 +5,10 @@ This module provides the Falcon API client and authentication utilities for the 
 """
 
 import functools
+import logging
 import os
 import platform
+import re
 import sys
 import threading
 from importlib.metadata import PackageNotFoundError, version
@@ -20,6 +22,35 @@ from falconpy import APIHarnessV2  # type: ignore[import-untyped]
 from falcon_mcp.common.logging import get_logger
 
 logger = get_logger(__name__)
+
+# user:password@ in a URL, e.g. an authenticated proxy. Greedy up to the last `@`
+# before the path, so a password containing `@` is masked whole.
+_URL_CREDENTIALS = re.compile(r"(?<=://)[^/\s'\"]+@")
+
+
+def _redact_url_credentials(text: str) -> str:
+    return _URL_CREDENTIALS.sub("***@", text)
+
+
+class _RedactUrlCredentials(logging.Filter):
+    """Mask user:password@ in URLs. FalconPy's debug log prints the proxy URL as given."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        redacted = _redact_url_credentials(message)
+        if redacted != message:
+            record.msg, record.args = redacted, ()
+        return True
+
+
+# FalconPy logs to the Logger passed as `debug`, so its records pass this filter.
+_FALCONPY_LOG = logging.getLogger("falcon_mcp.falconpy")
+_FALCONPY_LOG.addFilter(_RedactUrlCredentials())
+
+
+def _mask_cid(cid: str) -> str:
+    """Show only the last four characters of a CID in logs and messages."""
+    return f"****{cid[-4:]}" if len(cid) > 4 else "****"
 
 
 class FalconClient:
@@ -71,7 +102,8 @@ class FalconClient:
             "client_id": self.client_id,
             "client_secret": self.client_secret,
             "base_url": self.base_url,
-            "debug": debug,
+            # A Logger rather than True, so FalconPy's records pass the redaction filter
+            "debug": _FALCONPY_LOG if debug else False,
             "user_agent": self.get_user_agent(),
         }
 
@@ -94,7 +126,7 @@ class FalconClient:
 
         logger.debug("Initialized Falcon client with base URL: %s", self.base_url)
         if self.member_cid:
-            logger.debug("Flight Control member_cid: %s", self.member_cid)
+            logger.debug("Flight Control member_cid: %s", _mask_cid(self.member_cid))
 
     @property
     def token_status(self) -> int | None:
@@ -123,7 +155,7 @@ class FalconClient:
             )
         elif self.token_status == 403 and self.member_cid:
             parts.append(
-                f"Hint: A member_cid is configured ({self.member_cid})."
+                f"Hint: A member_cid is configured ({_mask_cid(self.member_cid)})."
                 " Verify this is a valid child CID managed by your parent tenant,"
                 " not the parent CID itself."
             )

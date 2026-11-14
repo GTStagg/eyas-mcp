@@ -79,6 +79,31 @@ class TestIdpModule(TestModules):
         self.assertEqual(result["investigation_summary"]["status"], "completed")
         self.assertGreater(result["investigation_summary"]["entity_count"], 0)
 
+    def test_investigate_entity_rejects_fan_out_inputs_without_calling_the_api(self):
+        """Per-entity investigations make one call each, so the input is bounded."""
+        for kwargs in (
+            {"entity_ids": [f"entity-{n}" for n in range(101)]},
+            {"entity_ids": ["entity-1"], "investigation_types": ["entity_details", "bogus"]},
+        ):
+            with self.subTest(kwargs=str(kwargs)[:60]):
+                result = self.module.investigate_entity(**kwargs)
+                self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()
+
+    def test_investigate_entity_runs_each_investigation_type_once(self):
+        self.mock_client.command.return_value = {
+            "status_code": 200,
+            "body": {"data": {"entities": {"nodes": []}}},
+        }
+
+        result = self.module.investigate_entity(
+            entity_ids=["entity-1"],
+            investigation_types=["timeline_analysis"] * 4,
+        )
+
+        self.assertEqual(result["investigation_summary"]["investigation_types"], ["timeline_analysis"])
+        self.assertEqual(self.mock_client.command.call_count, 1)
+
     def test_investigate_entity_uses_primary_display_name_pattern(self):
         """Entity name resolution should use wildcard-capable GraphQL patterns."""
         self.mock_client.command.return_value = {

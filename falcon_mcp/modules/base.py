@@ -15,7 +15,11 @@ from mcp.server import FastMCP
 from mcp.types import ToolAnnotations
 
 from falcon_mcp.client import FalconClient
-from falcon_mcp.common.errors import _format_error_response, handle_api_response
+from falcon_mcp.common.errors import (
+    _format_error_response,
+    error_details,
+    handle_api_response,
+)
 from falcon_mcp.common.logging import get_logger
 from falcon_mcp.common.utils import filter_none_values, prepare_api_parameters
 
@@ -698,7 +702,7 @@ class BaseModule(ABC):
             detail = f" API said: {'; '.join(api_messages)}" if api_messages else ""
             return _format_error_response(
                 f"{error_message}:{detail}" if detail else error_message,
-                details=response,
+                details=error_details(response),
                 operation=operation,
             )
 

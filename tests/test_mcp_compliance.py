@@ -525,6 +525,17 @@ class TestMCPComplianceDynamic(unittest.IsolatedAsyncioTestCase):
         # which is the correct conservative posture for a meta-dispatcher.
         self.assertIsNone(tools["falcon_execute_tool"].annotations)
 
+    async def test_execute_tool_is_read_only_when_every_reachable_tool_is(self):
+        """Under --read-only the catalog holds only reads, so the executor is one too."""
+        server = FalconMCPServer(enabled_modules={"detections"}, dynamic=True, read_only=True)
+        async with create_connected_server_and_client_session(server.server) as session:
+            tools = {t.name: t for t in (await session.list_tools()).tools}
+
+        annotations = tools["falcon_execute_tool"].annotations
+        self.assertIsNotNone(annotations)
+        self.assertTrue(annotations.readOnlyHint)
+        self.assertFalse(annotations.destructiveHint)
+
 
 if __name__ == "__main__":
     unittest.main()

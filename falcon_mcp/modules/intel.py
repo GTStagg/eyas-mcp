@@ -362,6 +362,11 @@ class IntelModule(BaseModule):
 
         # If it's not a numeric ID, search for the actor first
         if not actor_id.isdigit():
+            if "'" in actor or "\\" in actor:
+                return [{
+                    "error": "Invalid actor name",
+                    "message": "An actor name can't contain quotes or backslashes.",
+                }]
             logger.debug("Searching for actor: %s", actor)
 
             # Search for actors using the provided name with FQL filter

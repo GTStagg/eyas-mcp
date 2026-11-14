@@ -691,6 +691,8 @@ class TestNGSIEMModule(TestModules):
             "../search-all",
             "search\\all",
             "search%2Fall",
+            "search-all?x=1",
+            "search-all#frag",
         ):
             with self.subTest(repository=repository):
                 self.mock_client.command.reset_mock()
