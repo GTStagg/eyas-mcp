@@ -26,6 +26,16 @@
 
 ### Bug Fixes
 
+* **idp:** `falcon_idp_investigate_entity` refuses more than 100 `entity_ids` and unknown `investigation_types`, and runs each investigation type once. Timeline and relationship analysis make one call per entity, so one request could fan out into thousands
+* **ioc:** `falcon_remove_iocs` refuses `ids` and `filter` together. The API deletes by the filter when both are sent, which can reach far more IOCs than the IDs named
+* **rtr:** read-only RTR command strings refuse `;`, `&`, `|`, `<`, `>` and backticks, so a call runs one command. `&` and `;` are legal in Windows file names, so a path such as `C:\R&D` can no longer be read through these tools
+* **intel, cases, discover:** `falcon_get_mitre_report` refuses quotes in actor names and `falcon_aggregate_case_file_details` refuses quotes, brackets and commas in case IDs, so neither can add clauses to the filter. The Discover asset searches put the caller's filter in parentheses so it can't widen the managed or unmanaged scope
+* **errors:** API error `details` keep `status_code` and `body` and leave out the response headers. Each API error is logged once instead of twice
+* **logging:** `--debug` no longer writes proxy credentials to the log, and logs and startup errors show only the last four characters of the member CID
+* **http:** a non-ASCII `x-api-key` header gets a 401 instead of a server error
+* **dynamic:** `falcon_execute_tool` is annotated read-only when every tool it can reach is read-only, as under `--read-only`
+* **ngsiem:** repository names can't contain `?` or `#`
+* **host groups:** the host group listing behind the membership check stops after 200 pages
 * **host groups:** `falcon_get_host_group_membership` lists a host group that no longer exists under `unresolved_group_ids` instead of failing the whole call ([#14](https://github.com/GTStagg/eyas-mcp/pull/14))
 * **policies:** `falcon_update_policy` and `falcon_create_policy` flatten prevention settings in the grouped shape a policy read returns into the `[{id, value}]` list the API accepts ([#15](https://github.com/GTStagg/eyas-mcp/pull/15))
 * **policies:** `platform_name` is sent in the API's case (`Windows`, `Mac`, `Linux`), so `windows` or `MAC` no longer fail with HTTP 400 ([#15](https://github.com/GTStagg/eyas-mcp/pull/15))
@@ -36,8 +46,18 @@
 * **host groups:** `falcon_search_host_groups` caps `limit` at 500, the largest page size Falcon accepts; larger values used to fail with HTTP 400
 * tool and resource lists, and the `examples` in tool schemas, come out in the same order in every server process, so clients' prompt caches stay valid across restarts
 
+### Performance Improvements
+
+* **guardian:** the `fleet_summary` report of `falcon_generate_guardian_report` fetches the agent inventory and the skill inventory at the same time instead of one after the other
+* **docker:** the image build no longer resolves a lockfile it then discards; it installs from the committed `uv.lock`
+
+### Code Refactoring
+
+* remove helpers that only tests used (`FalconError`, `AuthenticationError`, `APIError`, `is_success_response`, `extract_resources`, `extract_first_resource`), an unused NGSIEM constant and a parameter nothing passed. Batched get-by-ID and alert-update loops share one helper each. Tool schemas and behaviour are unchanged
+
 ### Documentation
 
+* **docker:** the HTTP examples publish the port on `127.0.0.1` and use `--require-api-key`, since DNS-rebinding protection is off inside a container
 * name eyas-mcp throughout the docs, refresh the README module table, and update `CLAUDE.md` for the public repository and release rules
 
 ## 0.21.0 (2026-11-10)

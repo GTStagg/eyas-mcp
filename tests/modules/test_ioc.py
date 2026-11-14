@@ -344,6 +344,16 @@ class TestIOCModule(TestModules):
         self.assertIn("error", result[0])
         self.mock_client.command.assert_not_called()
 
+    def test_remove_iocs_rejects_ids_and_filter_together(self):
+        """With both, the API deletes by filter, which can reach far more than the ids."""
+        result = self.module.remove_iocs(
+            ids=["ioc-1"], filter="type:'domain'", comment=None, from_parent=None
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertIn("not both", result[0]["error"])
+        self.mock_client.command.assert_not_called()
+
     # Security validation tests
 
     def test_search_iocs_with_special_characters_in_filter(self):

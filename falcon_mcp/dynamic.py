@@ -512,10 +512,17 @@ class DynamicMode:
             annotations=READ_ONLY_ANNOTATIONS,
             structured_output=False,
         )
+        # When every reachable tool is a read (as under --read-only), the executor is
+        # one too. Otherwise it stays unannotated, which clients must treat as possibly
+        # destructive, so a blanket approval of it is a choice to allow writes.
+        all_reads = all(
+            e.tool.annotations is None or e.tool.annotations.readOnlyHint
+            for e in self.catalog.entries.values()
+        )
         self.server.add_tool(
             self._execute_tool,
             name="falcon_execute_tool",
-            annotations=None,
+            annotations=READ_ONLY_ANNOTATIONS if all_reads else None,
             structured_output=False,
         )
 

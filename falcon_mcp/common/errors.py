@@ -32,48 +32,20 @@ GATEWAY_NO_ROUTE_DESCRIPTION = (
 )
 
 
-class FalconError(Exception):
-    """Base exception for all Falcon MCP server errors."""
-
-
-class AuthenticationError(FalconError):
-    """Raised when authentication with the Falcon API fails."""
-
-
-class APIError(FalconError):
-    """Raised when a Falcon API request fails."""
-
-    def __init__(
-        self,
-        message: str,
-        status_code: int | None = None,
-        body: dict[str, Any] | None = None,
-        operation: str | None = None,
-    ):
-        self.status_code = status_code
-        self.body = body
-        self.operation = operation
-        super().__init__(message)
-
-
-def is_success_response(response: dict[str, Any]) -> bool:
-    """Check if an API response indicates success.
-
-    Args:
-        response: The API response dictionary
-
-    Returns:
-        bool: True if the response indicates success (status code 200)
-    """
-    return response.get("status_code") == 200
-
-
 def _has_no_gateway_route(response: dict[str, Any]) -> bool:
     """Check if a response is the gateway's 403 for an API it can't route."""
     if response.get("status_code") != 403:
         return False
     errors = response.get("body", {}).get("errors", [])
     return any(GATEWAY_NO_ROUTE_MARKER in e.get("message", "").lower() for e in errors)
+
+
+def error_details(response: dict[str, Any]) -> dict[str, Any]:
+    """The parts of a failed FalconPy response worth returning: status code and body.
+
+    Response headers are left out; they add size, not diagnosis.
+    """
+    return {key: response[key] for key in ("status_code", "body") if key in response}
 
 
 def _format_error_response(
@@ -135,7 +107,7 @@ def handle_api_response(
     status_code: int | None = response.get("status_code")
 
     if status_code is None or status_code >= 300:
-        details = response
+        details = error_details(response)
 
         if _has_no_gateway_route(response):
             # Leave out the gateway's text and body, which include the tenant's CID
@@ -160,9 +132,7 @@ def handle_api_response(
             if required_scopes:
                 status_message += f" Required scopes: {', '.join(required_scopes)}"
 
-        # Log the error
-        logger.error("Error: %s: %s", error_message, status_message)
-
+        # _format_error_response logs the message
         return _format_error_response(
             f"{error_message}: {status_message}", details=details, operation=operation
         )

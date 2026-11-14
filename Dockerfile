@@ -17,11 +17,7 @@ ENV UV_COMPILE_BYTECODE=1
 # Copy from the cache instead of linking since it's a mounted volume
 ENV UV_LINK_MODE=copy
 
-# Generate proper TOML lockfile first
-RUN --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv lock
-
-# Install the project's dependencies using the lockfile
+# Install the project's dependencies from the committed lockfile
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     --mount=type=bind,source=uv.lock,target=uv.lock \

@@ -129,7 +129,7 @@ class TestDiscoverModule(unittest.TestCase):
         self.assertEqual(first_call[0][0], "combined_hosts")
         self.assertEqual(
             first_call[1]["parameters"]["filter"],
-            "entity_type:'unmanaged'+platform_name:'Windows'",
+            "entity_type:'unmanaged'+(platform_name:'Windows')",
         )
         self.assertEqual(
             result["results"], [{"device_id": "host1", "hostname": "PC-001"}]
@@ -192,7 +192,7 @@ class TestDiscoverModule(unittest.TestCase):
         self.assertEqual(first_call[0][0], "combined_hosts")
         params = first_call[1]["parameters"]
         self.assertEqual(
-            params["filter"], "entity_type:'unmanaged'+criticality:'Critical'"
+            params["filter"], "entity_type:'unmanaged'+(criticality:'Critical')"
         )
         self.assertEqual(params["limit"], 50)
         self.assertEqual(params["offset"], 10)
@@ -222,7 +222,7 @@ class TestDiscoverModule(unittest.TestCase):
         self.assertEqual(first_call[0][0], "combined_hosts")
         self.assertEqual(
             first_call[1]["parameters"]["filter"],
-            "entity_type:'managed'+encryption_status:'Unencrypted'",
+            "entity_type:'managed'+(encryption_status:'Unencrypted')",
         )
         self.assertEqual(
             result["results"], [{"id": "host1", "encryption_status": "Unencrypted"}]
@@ -289,7 +289,7 @@ class TestDiscoverModule(unittest.TestCase):
         self.assertEqual(first_call[0][0], "combined_hosts")
         params = first_call[1]["parameters"]
         self.assertEqual(
-            params["filter"], "entity_type:'managed'+criticality:'Critical'"
+            params["filter"], "entity_type:'managed'+(criticality:'Critical')"
         )
         self.assertEqual(params["limit"], 50)
         self.assertEqual(params["offset"], 10)

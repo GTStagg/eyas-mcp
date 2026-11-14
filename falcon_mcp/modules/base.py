@@ -15,7 +15,11 @@ from mcp.server import FastMCP
 from mcp.types import ToolAnnotations
 
 from falcon_mcp.client import FalconClient
-from falcon_mcp.common.errors import _format_error_response, handle_api_response
+from falcon_mcp.common.errors import (
+    _format_error_response,
+    error_details,
+    handle_api_response,
+)
 from falcon_mcp.common.logging import get_logger
 from falcon_mcp.common.utils import filter_none_values, prepare_api_parameters
 
@@ -143,6 +147,28 @@ class BaseModule(ABC):
         self.resources.append(str(resource_uri))
         logger.debug("Added resource: %s", resource_uri)
 
+    def _base_get_by_ids_batched(
+        self,
+        operation: str,
+        ids: list[str],
+        batch_size: int,
+        **kwargs: Any,
+    ) -> list[Any] | dict[str, Any]:
+        """Call _base_get_by_ids for `ids` in batches of `batch_size`.
+
+        Returns every batch's records in batch order, or the first batch's error.
+        No ids means no call. `kwargs` go to _base_get_by_ids unchanged.
+        """
+        records: list[Any] = []
+        for start in range(0, len(ids), batch_size):
+            batch = self._base_get_by_ids(
+                operation=operation, ids=ids[start : start + batch_size], **kwargs
+            )
+            if self._is_error(batch):
+                return batch
+            records.extend(batch)
+        return records
+
     def _base_get_by_ids(
         self,
         operation: str,
@@ -242,40 +268,15 @@ class BaseModule(ABC):
         operation: str,
         search_params: dict[str, Any],
         error_message: str = "Search operation failed",
-        default_result: Any = None,
-    ) -> list[dict[str, Any]] | dict[str, Any]:
-        """Standardized API call for search operations with parameters.
-
-        This method consolidates the common pattern of:
-        1. Preparing parameters
-        2. Making API request with parameters
-        3. Handling the response
-        4. Error checking
+    ) -> list[Any] | dict[str, Any]:
+        """Run a search operation and return its resources ([] when empty) or an error dict.
 
         Args:
             operation: The API operation name (e.g., "QueryDevicesByFilter")
             search_params: Dictionary of search parameters (filter, limit, offset, sort, etc.)
             error_message: Custom error message for failed operations
-            default_result: Default value to return if no results found
-
-        Returns:
-            API response data or error dict
         """
-        # Prepare parameters for the API request
-        prepared_params = prepare_api_parameters(search_params)
-
-        logger.debug("Executing %s with params: %s", operation, prepared_params)
-
-        # Make the API request
-        response = self.client.command(operation, parameters=prepared_params)
-
-        # Handle the response
-        return handle_api_response(
-            response,
-            operation=operation,
-            error_message=error_message,
-            default_result=default_result if default_result is not None else [],
-        )
+        return self._base_search_with_meta(operation, search_params, error_message)[0]
 
     def _base_query_api_call(
         self,
@@ -339,51 +340,22 @@ class BaseModule(ABC):
         operation: str,
         api_params: dict[str, Any],
         error_message: str = "GET operation failed",
-        decode_binary: bool = True,
     ) -> list[dict[str, Any]] | dict[str, Any] | str:
-        """Standardized API call for GET operations with optional binary response handling.
+        """Run a GET operation whose success response may be a file (e.g. GetMitreReport).
 
-        This method handles various GET operations that may return:
-        - Standard JSON responses (handled by handle_api_response)
-        - Binary responses that need UTF-8 decoding (like MITRE reports)
-
-        Args:
-            operation: The API operation name (e.g., "GetMitreReport", "GetReportPdf")
-            api_params: Dictionary of API parameters
-            error_message: Custom error message for failed operations
-            decode_binary: Whether to decode binary responses as UTF-8 (default: True)
-
-        Returns:
-            - For successful operations with binary responses: decoded string content
-            - For successful operations with JSON responses: standard API response
-            - For failed operations: error dict
+        Returns the file decoded as UTF-8 text, the resources of a JSON response, or an
+        error dict.
         """
-        # Prepare parameters for the API request
         prepared_params = prepare_api_parameters(api_params)
 
         logger.debug("Executing %s with params: %s", operation, prepared_params)
 
-        # Make the API request
         command_response = self.client.command(operation, parameters=prepared_params)
 
-        # FalconPy returns raw bytes for binary download endpoints (e.g., GetMitreReport)
+        # FalconPy returns raw bytes for binary download endpoints
         if isinstance(command_response, bytes):
-            if decode_binary:
-                return command_response.decode('utf-8')
-            return command_response
+            return command_response.decode("utf-8")
 
-        # Dict response - check status code and use standard error handling
-        status_code = command_response.get("status_code")
-
-        if status_code != 200:
-            return handle_api_response(
-                command_response,
-                operation=operation,
-                error_message=error_message,
-                default_result=[],
-            )
-
-        # Standard response handling for dict responses
         return handle_api_response(
             command_response,
             operation=operation,
@@ -698,7 +670,7 @@ class BaseModule(ABC):
             detail = f" API said: {'; '.join(api_messages)}" if api_messages else ""
             return _format_error_response(
                 f"{error_message}:{detail}" if detail else error_message,
-                details=response,
+                details=error_details(response),
                 operation=operation,
             )
 

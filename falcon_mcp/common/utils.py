@@ -5,9 +5,8 @@ This module provides common utility functions for the Falcon MCP server.
 """
 
 import re
-from typing import Any, Optional
+from typing import Any
 
-from .errors import _format_error_response, is_success_response
 from .logging import get_logger
 
 logger = get_logger(__name__)
@@ -43,49 +42,6 @@ def prepare_api_parameters(params: dict[str, Any]) -> dict[str, Any]:
     filtered = filter_none_values(params)
 
     return filtered
-
-
-def extract_resources(
-    response: dict[str, Any],
-    default: Optional[list[dict[str, Any]]] = None,
-) -> list[dict[str, Any]]:
-    """Extract resources from an API response.
-
-    Args:
-        response: API response dictionary
-        default: Default value if no resources are found
-
-    Returns:
-        List[Dict[str, Any]]: Extracted resources
-    """
-    if not is_success_response(response):
-        return default if default is not None else []
-
-    resources = response.get("body", {}).get("resources", [])
-    return resources if resources else (default if default is not None else [])
-
-
-def extract_first_resource(
-    response: dict[str, Any],
-    operation: str,
-    not_found_error: str = "Resource not found",
-) -> dict[str, Any]:
-    """Extract the first resource from an API response.
-
-    Args:
-        response: API response dictionary
-        operation: The API operation that was performed
-        not_found_error: Error message if no resources are found
-
-    Returns:
-        Dict[str, Any]: First resource or error response
-    """
-    resources = extract_resources(response)
-
-    if not resources:
-        return _format_error_response(not_found_error, operation=operation)
-
-    return resources[0]
 
 
 def sanitize_input(input_str: str) -> str:

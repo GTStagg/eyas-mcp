@@ -33,25 +33,29 @@ Run with stdio transport (requires -i flag):
 docker run -i --rm --env-file /path/to/.env eyas-mcp:latest
 ```
 
+The HTTP transports below need an API key. Put `FALCON_MCP_API_KEY=<a long random value>` in the
+`.env` file; `--require-api-key` makes the server refuse to start without it. Clients send the key in
+an `x-api-key` header.
+
 Run with SSE transport:
 
 ```bash
-docker run --rm -p 8000:8000 --env-file /path/to/.env \
-  eyas-mcp:latest --transport sse --host 0.0.0.0
+docker run --rm -p 127.0.0.1:8000:8000 --env-file /path/to/.env \
+  eyas-mcp:latest --transport sse --host 0.0.0.0 --require-api-key
 ```
 
 Run with streamable-http transport:
 
 ```bash
-docker run --rm -p 8000:8000 --env-file /path/to/.env \
-  eyas-mcp:latest --transport streamable-http --host 0.0.0.0
+docker run --rm -p 127.0.0.1:8000:8000 --env-file /path/to/.env \
+  eyas-mcp:latest --transport streamable-http --host 0.0.0.0 --require-api-key
 ```
 
 Run with custom port:
 
 ```bash
-docker run --rm -p 8080:8080 --env-file /path/to/.env \
-  eyas-mcp:latest --transport streamable-http --host 0.0.0.0 --port 8080
+docker run --rm -p 127.0.0.1:8080:8080 --env-file /path/to/.env \
+  eyas-mcp:latest --transport streamable-http --host 0.0.0.0 --port 8080 --require-api-key
 ```
 
 Run with specific modules (stdio transport):
@@ -88,16 +92,13 @@ docker run -i --rm \
 >
 > The `-i` flag is required when using the default stdio transport.
 
-The HTTP transports have no authentication by default. Whenever the published port is reachable beyond
-the local host, set `--api-key` (or the `FALCON_MCP_API_KEY` environment variable) so callers must send
-a matching `x-api-key` header, otherwise anyone who can reach the port can drive the server with your
-CrowdStrike credentials:
-
-```bash
-docker run --rm -p 8000:8000 --env-file /path/to/.env \
-  eyas-mcp:latest \
-  --transport streamable-http --host 0.0.0.0 --api-key your-secret-key
-```
+The HTTP transports have no authentication by default. Inside a container the server binds to
+`0.0.0.0`, so the DNS-rebinding protection it applies to a loopback bind is off, even when the port is
+published only on `127.0.0.1`. A web page open in your browser could then reach the endpoint. Always set
+an API key (`--api-key` or `FALCON_MCP_API_KEY`) for HTTP in Docker, otherwise anyone who can reach the
+port can drive the server with your CrowdStrike credentials. Add `--require-api-key` so a missing key
+stops the server instead of starting it open. `-p 127.0.0.1:...` keeps the port off other machines;
+publish it more widely only behind a gateway that authenticates callers.
 
 See [HTTP Transport Security](../getting-started/configuration.md#http-transport-security).
 

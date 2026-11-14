@@ -282,7 +282,7 @@ class IOCModule(BaseModule):
         ),
         filter: str | None = Field(
             default=None,
-            description="FQL expression for bulk IOC removal. If both `filter` and `ids` are provided, `filter` takes precedence.",
+            description="FQL expression for bulk IOC removal. Give `ids` or `filter`, not both.",
         ),
         comment: str | None = Field(
             default=None,
@@ -295,13 +295,23 @@ class IOCModule(BaseModule):
     ) -> dict[str, Any] | list[dict[str, Any]]:
         """Remove custom IOCs by IDs or FQL filter.
 
-        Provide either specific IDs or an FQL filter for bulk removal. If both are
-        given, filter takes precedence. Returns a success summary with deleted IOC IDs.
+        Provide either specific IDs or an FQL filter for bulk removal, not both.
+        Returns a success summary with deleted IOC IDs.
         """
         if not ids and not filter:
             return [
                 _format_error_response(
                     "Either `ids` or `filter` must be provided to remove IOCs.",
+                    operation="indicator_delete_v1",
+                )
+            ]
+        if ids and filter:
+            # The API deletes by filter when both are sent, which can reach far more
+            # IOCs than the ids named.
+            return [
+                _format_error_response(
+                    "Provide `ids` or `filter`, not both: with both, the API deletes "
+                    "everything the filter matches.",
                     operation="indicator_delete_v1",
                 )
             ]

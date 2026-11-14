@@ -105,6 +105,11 @@ class TestAPIKeyEdgeCases:
         response = client.get("/", headers={"x-api-key": "test\x00secret-key"})
         assert response.status_code == 401
 
+    def test_non_ascii_api_key_is_rejected_not_an_error(self, client):
+        """A non-ASCII header value gets a 401, not a 500 from compare_digest."""
+        response = client.get("/", headers={"x-api-key": "caf\xe9".encode("latin-1")})
+        assert response.status_code == 401
+
 
 class TestHTTPMethodCoverage:
     """Test that authentication applies to all HTTP methods."""

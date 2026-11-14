@@ -316,18 +316,13 @@ class DiscoverModule(BaseModule):
             if len(page) < page_limit:
                 break
 
-        records: list[dict[str, Any]] = []
-        for start in range(0, len(ids), DISCOVER_PAGE_SIZE):
-            batch = self._base_get_by_ids(
-                operation=get_operation,
-                ids=ids[start : start + DISCOVER_PAGE_SIZE],
-                use_params=True,
-            )
-            if isinstance(batch, dict):
-                return [batch]
-            records.extend(batch)
+        fetched = self._base_get_by_ids_batched(
+            operation=get_operation, ids=ids, batch_size=DISCOVER_PAGE_SIZE, use_params=True
+        )
+        if isinstance(fetched, dict):
+            return [fetched]
 
-        records = self._reorder_by_ids(ids, records, id_field="id")
+        records = self._reorder_by_ids(ids, fetched, id_field="id")
         if transform is not None:
             records = [transform(record) for record in records]
 
@@ -533,7 +528,8 @@ class DiscoverModule(BaseModule):
 
         # Combine with user filter if provided
         if filter:
-            combined_filter = f"{base_filter}+{filter}"
+            # Parenthesized so an OR in the caller's filter cannot escape the scope
+            combined_filter = f"{base_filter}+({filter})"
         else:
             combined_filter = base_filter
 
@@ -607,7 +603,8 @@ class DiscoverModule(BaseModule):
 
         # Combine with user filter if provided
         if filter:
-            combined_filter = f"{base_filter}+{filter}"
+            # Parenthesized so an OR in the caller's filter cannot escape the scope
+            combined_filter = f"{base_filter}+({filter})"
         else:
             combined_filter = base_filter
 

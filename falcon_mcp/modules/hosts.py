@@ -13,7 +13,11 @@ from mcp.server.fastmcp.resources import TextResource
 from mcp.types import ToolAnnotations
 from pydantic import AnyUrl, Field
 
-from falcon_mcp.common.errors import _format_error_response, handle_api_response
+from falcon_mcp.common.errors import (
+    _format_error_response,
+    error_details,
+    handle_api_response,
+)
 from falcon_mcp.common.logging import get_logger
 from falcon_mcp.modules.base import BaseModule
 from falcon_mcp.resources.hosts import SEARCH_HOSTS_FQL_DOCUMENTATION
@@ -474,7 +478,7 @@ class HostsModule(BaseModule):
                 detail = f" API said: {'; '.join(api_messages)}" if api_messages else ""
                 return _format_error_response(
                     f"{error_message}:{detail}",
-                    details=response,
+                    details=error_details(response),
                     operation=CONTAINMENT_OPERATION,
                 )
 

@@ -74,6 +74,8 @@ MAX_FALCON_SCRIPT_JSON_INPUT = 4096
 # Characters that could end the ```'...'``` argument wrapper or split the command.
 _FORBIDDEN_JSON_INPUT_CHARS = re.compile(r"[`'\x00-\x1f\x7f]")
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+# Separators, pipes and redirects that could chain a second command or write a file
+_COMMAND_CHAIN_CHARS = re.compile(r"[;&|<>`]")
 
 # RTR_ListFalconScripts returns nothing at all when limit is above 100.
 FALCON_SCRIPT_PAGE_SIZE = 100
@@ -140,6 +142,11 @@ def _validate_read_only_command(base_command: str, command_string: str | None) -
         return None
     if not isinstance(command_string, str) or _CONTROL_CHARS.search(command_string):
         return "command_string must be a single line without control characters."
+    if _COMMAND_CHAIN_CHARS.search(command_string):
+        return (
+            "command_string can't contain ; & | < > or backticks. "
+            "Run one read-only command per call."
+        )
     tokens = command_string.split()
     if not tokens or tokens[0].lower() != base_command:
         return f"command_string must start with the base command {base_command!r}."
@@ -862,8 +869,8 @@ class RTRModule(BaseModule):
         command_string: str | None = Field(
             default=None,
             description=(
-                "Optional full command line to execute. Example: "
-                "`cat C:\\Windows\\win.ini`."
+                "Optional full command line to execute: one command, without "
+                "; & | < > or backticks. Example: `cat C:\\Windows\\win.ini`."
             ),
         ),
         persist: bool = Field(
@@ -935,8 +942,8 @@ class RTRModule(BaseModule):
         command_string: str | None = Field(
             default=None,
             description=(
-                "Optional full command line to execute. Example: "
-                "`cat C:\\Windows\\win.ini`."
+                "Optional full command line to execute: one command, without "
+                "; & | < > or backticks. Example: `cat C:\\Windows\\win.ini`."
             ),
         ),
         persist: bool = Field(
@@ -1073,7 +1080,8 @@ class RTRModule(BaseModule):
             default=None,
             description=(
                 "Optional full command line, starting with the base command. Defaults to "
-                "the base command alone. Example: `filehash C:\\Windows\\System32\\cmd.exe`."
+                "the base command alone. One command, without ; & | < > or backticks. "
+                "Example: `filehash C:\\Windows\\System32\\cmd.exe`."
             ),
         ),
         timeout_seconds: int = Field(
@@ -1893,19 +1901,19 @@ class RTRModule(BaseModule):
             if len(page_ids) < FALCON_SCRIPT_PAGE_SIZE or not new_ids:
                 break
 
-        scripts: list[dict[str, Any]] = []
-        for start in range(0, len(script_ids), FALCON_SCRIPT_PAGE_SIZE):
-            details = self._base_get_by_ids(
-                operation="RTR_GetFalconScripts",
-                ids=script_ids[start : start + FALCON_SCRIPT_PAGE_SIZE],
-                use_params=True,
-            )
-            if self._is_error(details):
-                return {}, details
-            scripts.extend(s for s in details if isinstance(s, dict))
+        details = self._base_get_by_ids_batched(
+            operation="RTR_GetFalconScripts",
+            ids=script_ids,
+            batch_size=FALCON_SCRIPT_PAGE_SIZE,
+            use_params=True,
+        )
+        if isinstance(details, dict):
+            return {}, details
 
         catalog = {
-            script["name"]: script for script in scripts if isinstance(script.get("name"), str)
+            script["name"]: script
+            for script in details
+            if isinstance(script, dict) and isinstance(script.get("name"), str)
         }
         self._falcon_script_cache = catalog
         return catalog, None

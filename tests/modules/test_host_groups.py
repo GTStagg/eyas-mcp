@@ -1035,6 +1035,21 @@ class TestHostGroupMembershipVerify(TestModules):
         operations = [c[0][0] for c in self.mock_client.command.call_args_list]
         self.assertNotIn("queryGroupMembers", operations)
 
+    def test_group_listing_stops_after_the_page_cap(self):
+        """An API that keeps returning full pages with no total can't loop forever."""
+        from falcon_mcp.modules import host_groups
+
+        full_page = {
+            "status_code": 200,
+            "body": {"resources": [f"g{n}" for n in range(host_groups.GROUP_PAGE_SIZE)]},
+        }
+        self.mock_client.command.return_value = full_page
+
+        result = self.module._list_group_ids(None)
+
+        self.assertIn("error", result)
+        self.assertEqual(self.mock_client.command.call_count, host_groups.MAX_GROUP_PAGES)
+
 
 if __name__ == "__main__":
     unittest.main()

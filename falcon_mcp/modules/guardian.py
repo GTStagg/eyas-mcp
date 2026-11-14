@@ -2195,8 +2195,11 @@ class GuardianModule(BaseModule):
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         if report_type == "fleet_summary":
-            inventory = await self.get_guardian_inventory(time_range=time_range)
-            skills = await self._offload(self.get_guardian_fleet_skill_inventory)
+            # Independent: the inventory legs and the skill inventory run together
+            inventory, skills = await asyncio.gather(
+                self.get_guardian_inventory(time_range=time_range),
+                self._offload(self.get_guardian_fleet_skill_inventory),
+            )
             report: dict[str, Any] = {
                 "report_type": report_type,
                 "generated_at": generated_at,

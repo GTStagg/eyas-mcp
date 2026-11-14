@@ -1075,6 +1075,23 @@ class TestCasesModule(TestModules):
                 self.assertIn("date_ranges", result[0]["error"])
                 self.assertNotIn("fql_guide", result[0])
 
+    def test_aggregate_file_details_rejects_case_ids_that_break_the_filter(self):
+        """Case IDs are written into a quoted FQL list, so quotes and brackets are refused."""
+        for bad in ("a'],name:*'*'+case_id:['b", "a,b", "", 'a"b', "a\\b"):
+            with self.subTest(case_id=bad):
+                result = self.module.aggregate_case_file_details(
+                    field="name",
+                    agg_type="terms",
+                    case_ids=[bad],
+                    filter=None,
+                    size=None,
+                    from_=None,
+                    date_ranges=None,
+                    name=None,
+                )
+                self.assertIn("error", result[0])
+        self.mock_client.command.assert_not_called()
+
     def test_aggregate_file_details_date_range_without_date_ranges_skips_the_api(self):
         """Test that the file-details tool also rejects the spec before any call."""
         result = self.module.aggregate_case_file_details(

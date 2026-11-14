@@ -502,7 +502,55 @@ class TestFalconClient(unittest.TestCase):
         msg = client.auth_failure_message()
         self.assertIn("HTTP 403", msg)
         self.assertIn("member_cid", msg)
-        self.assertIn("parent-cid-used-by-mistake", msg)
+        # Masked to the last four characters, since this message is logged
+        self.assertIn("****take", msg)
+        self.assertNotIn("parent-cid-used-by-mistake", msg)
+
+    def test_falconpy_debug_log_masks_proxy_credentials(self):
+        """FalconPy logs the proxy URL at startup; the password must not reach the log."""
+        from falcon_mcp.client import _FALCONPY_LOG
+
+        with self.assertLogs(_FALCONPY_LOG, level="DEBUG") as captured:
+            _FALCONPY_LOG.debug(
+                "CONFIG: Proxy dictionary: %s",
+                str({"https": "http://user:sentinel-pass@proxy.example:8080"}),
+            )
+        output = "\n".join(captured.output)
+        self.assertNotIn("sentinel-pass", output)
+        self.assertIn("http://***@proxy.example:8080", output)
+
+    def test_proxy_password_containing_at_signs_is_masked_whole(self):
+        from falcon_mcp.client import _redact_url_credentials
+
+        text = str({"https": "http://user:p@ss@word@proxy.example:8080", "http": "http://u:x@h"})
+        redacted = _redact_url_credentials(text)
+        self.assertNotIn("ss@word", redacted)
+        self.assertNotIn("word", redacted)
+        self.assertIn("http://***@proxy.example:8080", redacted)
+        self.assertIn("http://***@h", redacted)
+
+    def test_real_falconpy_startup_log_masks_proxy_credentials(self):
+        """End to end through FalconPy's own startup logging. Constructing the client
+        doesn't authenticate, so nothing leaves the machine."""
+        from falcon_mcp.client import _FALCONPY_LOG
+
+        with self.assertLogs(_FALCONPY_LOG, level="DEBUG") as captured:
+            FalconClient(
+                client_id="id",
+                client_secret="secret",
+                proxy="http://user:sentinel-pass@proxy.example:8080",
+                debug=True,
+            )
+        output = "\n".join(captured.output)
+        self.assertIn("Proxy dictionary", output)
+        self.assertNotIn("sentinel-pass", output)
+
+    @patch("falcon_mcp.client.APIHarnessV2")
+    def test_debug_passes_the_redacting_logger_to_falconpy(self, mock_apiharness):
+        from falcon_mcp.client import _FALCONPY_LOG
+
+        FalconClient(client_id="id", client_secret="secret", debug=True)
+        self.assertIs(mock_apiharness.call_args[1]["debug"], _FALCONPY_LOG)
 
     @patch("falcon_mcp.client.os.environ.get")
     @patch("falcon_mcp.client.APIHarnessV2")

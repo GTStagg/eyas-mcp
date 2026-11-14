@@ -55,8 +55,8 @@ Returns the created indicator records on success.
 
 Remove custom IOCs by IDs or FQL filter.
 
-Provide either specific IDs or an FQL filter for bulk removal. If both are
-given, filter takes precedence. Returns a success summary with deleted IOC IDs.
+Provide either specific IDs or an FQL filter for bulk removal, not both.
+Returns a success summary with deleted IOC IDs.
 
 **Example prompts:**
 

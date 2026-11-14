@@ -28,6 +28,8 @@ logger = get_logger(__name__)
 MEMBERSHIP_CHECK_WORKERS = 8
 MEMBERSHIP_CHECK_BUDGET_SECONDS = 50
 GROUP_PAGE_SIZE = 500
+# Stops the group listing if the API keeps returning full pages (100,000 groups)
+MAX_GROUP_PAGES = 200
 GROUP_DETAILS_BATCH = 100
 # device_id is written into a quoted FQL value, so only a real AID is accepted.
 DEVICE_ID_PATTERN = re.compile(r"[0-9a-fA-F]{32}")
@@ -651,7 +653,7 @@ class HostGroupsModule(BaseModule):
         """List host group IDs, optionally filtered, across every page."""
         ids: list[str] = []
         offset = 0
-        while True:
+        for _ in range(MAX_GROUP_PAGES):
             params: dict[str, Any] = {"limit": GROUP_PAGE_SIZE, "offset": offset}
             if group_filter:
                 params["filter"] = group_filter
@@ -668,6 +670,11 @@ class HostGroupsModule(BaseModule):
             offset += len(page)
             if not page or len(page) < GROUP_PAGE_SIZE or (isinstance(total, int) and offset >= total):
                 return ids
+        return _format_error_response(
+            f"Stopped listing host groups after {MAX_GROUP_PAGES} pages. Narrow the "
+            "group filter.",
+            operation="queryHostGroups",
+        )
 
     def create_host_group(
         self,

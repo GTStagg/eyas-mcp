@@ -171,10 +171,10 @@ docker build -t eyas-mcp .
 # Run with .env file (stdio transport)
 docker run -i --rm --env-file /path/to/.env eyas-mcp:latest
 
-# Run with streamable-http transport (add --api-key when the port is reachable beyond localhost)
-docker run --rm -p 8000:8000 --env-file /path/to/.env \
+# Run with streamable-http transport (FALCON_MCP_API_KEY set in .env; clients send it as x-api-key)
+docker run --rm -p 127.0.0.1:8000:8000 --env-file /path/to/.env \
   eyas-mcp:latest \
-  --transport streamable-http --host 0.0.0.0 --api-key your-secret-key
+  --transport streamable-http --host 0.0.0.0 --require-api-key
 ```
 
 > [!CAUTION]
