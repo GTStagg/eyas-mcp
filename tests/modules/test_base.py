@@ -338,21 +338,15 @@ class TestBaseModule(TestModules):
         self.assertIn("error", result)
         self.assertIn("Custom error message", result["error"])
 
-    def test_base_search_api_call_custom_default_result(self):
-        """Test _base_search_api_call with custom default result."""
-        # Setup mock empty response
-        mock_response = {"status_code": 200, "body": {"resources": []}}
-        self.mock_client.command.return_value = mock_response
+    def test_base_search_api_call_empty_result_is_a_list(self):
+        self.mock_client.command.return_value = {"status_code": 200, "body": {"resources": []}}
 
-        # Call with custom default result
         result = self.module._base_search_api_call(
             operation="QueryDevicesByFilter",
             search_params={"limit": 10},
-            default_result={"message": "No results found"},
         )
 
-        # Verify custom default is returned for empty results
-        self.assertEqual(result, {"message": "No results found"})
+        self.assertEqual(result, [])
 
     def test_base_query_api_call_parameters_only(self):
         """Test _base_query_api_call with parameters only."""
@@ -527,7 +521,6 @@ class TestBaseModule(TestModules):
         binary_content = b'{"test": "binary_conversion", "status": "success"}'
         self.mock_client.command.return_value = binary_content
 
-        # Call _base_get_api_call with decode_binary=True (default)
         result = self.module._base_get_api_call(
             operation="GetBinaryData",
             api_params={"param1": "value1"},
@@ -544,26 +537,6 @@ class TestBaseModule(TestModules):
             "GetBinaryData",
             parameters={"param1": "value1"}
         )
-
-    def test_base_get_api_call_binary_to_string_disabled(self):
-        """Test _base_get_api_call with decode_binary=False returns raw bytes.
-
-        When decode_binary=False, FalconPy's raw bytes response should be returned as-is.
-        """
-        # Setup mock response - FalconPy returns raw bytes directly
-        binary_content = b'{"raw": "bytes_data"}'
-        self.mock_client.command.return_value = binary_content
-
-        # Call _base_get_api_call with decode_binary=False
-        result = self.module._base_get_api_call(
-            operation="GetRawBinaryData",
-            api_params={"param1": "value1"},
-            decode_binary=False
-        )
-
-        # Verify result is raw bytes (not decoded)
-        self.assertIsInstance(result, bytes, "Result should be raw bytes when decode_binary=False")
-        self.assertEqual(result, binary_content)
 
     def test_base_get_api_call_empty_binary_response(self):
         """Test _base_get_api_call handles empty binary response correctly.
@@ -652,12 +625,8 @@ class TestBaseModule(TestModules):
         self.assertIn("中文", result, "Chinese characters should be preserved")
         self.assertIn("🚀", result, "Emoji should be preserved")
 
-    def test_base_get_api_call_non_binary_response_with_decode_true(self):
-        """Test _base_get_api_call with dict response uses standard handling.
-
-        For non-binary endpoints, FalconPy returns a dict with status_code and body.
-        The decode_binary flag only applies to raw bytes responses.
-        """
+    def test_base_get_api_call_json_response_uses_standard_handling(self):
+        """For non-binary endpoints, FalconPy returns a dict with status_code and body."""
         # Setup mock response with non-binary body (dict) - standard FalconPy response
         mock_response = {
             "status_code": 200,
@@ -665,12 +634,7 @@ class TestBaseModule(TestModules):
         }
         self.mock_client.command.return_value = mock_response
 
-        # Call _base_get_api_call with decode_binary=True
-        result = self.module._base_get_api_call(
-            operation="GetJsonData",
-            api_params={},
-            decode_binary=True  # Should fall back to standard handling for non-binary
-        )
+        result = self.module._base_get_api_call(operation="GetJsonData", api_params={})
 
         # Verify falls back to standard response handling
         self.assertIsInstance(result, list, "Non-binary response should use standard handling")

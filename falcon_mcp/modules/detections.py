@@ -264,18 +264,13 @@ class DetectionsModule(BaseModule):
                 id_key="composite_ids",
                 parameters={"include_hidden": include_hidden},
             )
-        records: list[dict[str, Any]] = []
-        for start in range(0, len(ids), ALERT_ENTITY_BATCH):
-            batch = self._base_get_by_ids(
-                operation="PostEntitiesAlertsV2",
-                ids=ids[start : start + ALERT_ENTITY_BATCH],
-                id_key="composite_ids",
-                parameters={"include_hidden": include_hidden},
-            )
-            if isinstance(batch, dict):
-                return batch
-            records.extend(batch)
-        return records
+        return self._base_get_by_ids_batched(
+            operation="PostEntitiesAlertsV2",
+            ids=ids,
+            batch_size=ALERT_ENTITY_BATCH,
+            id_key="composite_ids",
+            parameters={"include_hidden": include_hidden},
+        )
 
     def aggregate_detections(
         self,
@@ -585,44 +580,27 @@ class DetectionsModule(BaseModule):
 
         body_base = {"action_parameters": action_parameters}
 
-        # PatchEntitiesAlertsV3 rejects more than MAX_UPDATE_COMPOSITE_IDS ids per
-        # request with HTTP 413, so chunk larger requests and fail loudly if any
-        # batch errors rather than reporting success on a truncated update.
-        result: list[dict[str, Any]] | dict[str, Any] = []
-        for i in range(0, len(ids), MAX_UPDATE_COMPOSITE_IDS):
-            batch = ids[i : i + MAX_UPDATE_COMPOSITE_IDS]
-            batch_result = self._base_query_api_call(
-                operation="PatchEntitiesAlertsV3",
-                body_params={**body_base, "composite_ids": batch},
-                error_message="Failed to update detections",
-                default_result=[],
-            )
-
-            if self._is_error(batch_result):
-                # The API applies each batch independently and cannot roll back, so
-                # ids before this batch are already updated. Report how many so the
-                # caller can retry only the remainder instead of re-applying
-                # non-idempotent actions (e.g. append_comment) to earlier ids.
-                if i > 0:
-                    batch_result["partial_success"] = {
-                        "updated_ids": ids[:i],
-                        "updated_count": i,
-                        "failed_and_remaining_ids": ids[i:],
-                    }
-                return batch_result
-
-            if isinstance(batch_result, list):
-                result.extend(batch_result)
+        result, error, done = self._patch_alerts(
+            body_base, ids, "Failed to update detections"
+        )
+        if error is not None:
+            # The API applies each batch independently and cannot roll back, so
+            # ids before this batch are already updated. Report how many so the
+            # caller can retry only the remainder instead of re-applying
+            # non-idempotent actions (e.g. append_comment) to earlier ids.
+            if done > 0:
+                error["partial_success"] = {
+                    "updated_ids": ids[:done],
+                    "updated_count": done,
+                    "failed_and_remaining_ids": ids[done:],
+                }
+            return error
 
         # Soft hint: closing without adding a resolution tag in this call may leave the
         # detection out of the console's Resolution view. Non-fatal — only wraps the success
         # case. We only know this call's add_tags, not any resolution tag set previously.
         _resolution_tags = {"true_positive", "false_positive", "ignored"}
-        if (
-            not self._is_error(result)
-            and status == "closed"
-            and not _resolution_tags.intersection(add_tags or [])
-        ):
+        if status == "closed" and not _resolution_tags.intersection(add_tags or []):
             return {
                 "result": result,
                 "hint": (
@@ -650,7 +628,6 @@ class DetectionsModule(BaseModule):
                     "include_hidden": True,
                 },
                 error_message="Failed to search the host's open detections",
-                default_result=[],
             )
             if isinstance(page, dict):
                 return page, False
@@ -792,24 +769,38 @@ class DetectionsModule(BaseModule):
         if comment is not None:
             action_parameters.append({"name": "append_comment", "value": comment})
 
+        _, error, done = self._patch_alerts(
+            {"action_parameters": action_parameters}, ids, "Failed to close detections"
+        )
+        summary["closed"] += done
+        summary["composite_ids"].extend(ids[:done])
+        if error is not None:
+            return {**summary, **error, "phase": "close", "failed_and_remaining_ids": ids[done:]}
+        return summary
+
+    def _patch_alerts(
+        self, body: dict[str, Any], ids: list[str], error_message: str
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, int]:
+        """Apply one PatchEntitiesAlertsV3 body to `ids` in batches.
+
+        The API rejects more than MAX_UPDATE_COMPOSITE_IDS ids per request with HTTP
+        413, and applies each batch on its own with no rollback. So this stops at the
+        first failed batch and returns (results, error or None, number of ids updated
+        before the failure).
+        """
+        results: list[dict[str, Any]] = []
         for start in range(0, len(ids), MAX_UPDATE_COMPOSITE_IDS):
-            batch = ids[start : start + MAX_UPDATE_COMPOSITE_IDS]
-            result = self._base_query_api_call(
+            batch_result = self._base_query_api_call(
                 operation="PatchEntitiesAlertsV3",
-                body_params={"action_parameters": action_parameters, "composite_ids": batch},
-                error_message="Failed to close detections",
+                body_params={**body, "composite_ids": ids[start : start + MAX_UPDATE_COMPOSITE_IDS]},
+                error_message=error_message,
                 default_result=[],
             )
-            if isinstance(result, dict):
-                return {
-                    **summary,
-                    **result,
-                    "phase": "close",
-                    "failed_and_remaining_ids": ids[start:],
-                }
-            summary["closed"] += len(batch)
-            summary["composite_ids"].extend(batch)
-        return summary
+            if self._is_error(batch_result):
+                return results, batch_result, start
+            if isinstance(batch_result, list):
+                results.extend(batch_result)
+        return results, None, len(ids)
 
 
 def _names_only_host(record: dict[str, Any], aid: str) -> bool:

@@ -32,42 +32,6 @@ GATEWAY_NO_ROUTE_DESCRIPTION = (
 )
 
 
-class FalconError(Exception):
-    """Base exception for all Falcon MCP server errors."""
-
-
-class AuthenticationError(FalconError):
-    """Raised when authentication with the Falcon API fails."""
-
-
-class APIError(FalconError):
-    """Raised when a Falcon API request fails."""
-
-    def __init__(
-        self,
-        message: str,
-        status_code: int | None = None,
-        body: dict[str, Any] | None = None,
-        operation: str | None = None,
-    ):
-        self.status_code = status_code
-        self.body = body
-        self.operation = operation
-        super().__init__(message)
-
-
-def is_success_response(response: dict[str, Any]) -> bool:
-    """Check if an API response indicates success.
-
-    Args:
-        response: The API response dictionary
-
-    Returns:
-        bool: True if the response indicates success (status code 200)
-    """
-    return response.get("status_code") == 200
-
-
 def _has_no_gateway_route(response: dict[str, Any]) -> bool:
     """Check if a response is the gateway's 403 for an API it can't route."""
     if response.get("status_code") != 403:

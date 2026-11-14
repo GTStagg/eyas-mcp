@@ -209,7 +209,6 @@ _PROCESS_TREE_EVENT_LIMIT = 5000
 # re-anchored window search and one parent lookup.
 _PROCESS_TREE_MAX_SEARCHES = 4
 _ANCHOR_PROBE_LOOKBACK = timedelta(days=7)
-_PARENT_LOOKUP_RADIUS = timedelta(minutes=60)
 _PARENT_LOOKUP_LIMIT = 5
 _COMMAND_LINE_MAX_CHARS = 1000
 

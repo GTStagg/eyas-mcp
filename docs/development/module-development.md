@@ -386,7 +386,7 @@ if isinstance(result, dict) and "error" in result:
 
 ### Response Processing
 
-1. **Use extract_resources**: Extract resources from API responses
+1. **Use handle_api_response**: Turn an API response into resources or an error
 2. **Handle Empty Results**: Provide appropriate defaults for empty results
 3. **Return Structured Data**: Return well-structured data that follows consistent patterns
 
@@ -458,7 +458,6 @@ def search_entities(self, filter: Optional[str] = None) -> List[Dict[str, Any]]:
 
 ### Error Handling (`falcon_mcp/common/errors.py`)
 
-- `is_success_response`: Check if an API response indicates success
 - `_format_error_response`: Format an error as a standardized response
 - `handle_api_response`: Handle an API response, returning either the result or an error
 
@@ -470,8 +469,6 @@ def search_entities(self, filter: Optional[str] = None) -> List[Dict[str, Any]]:
 
 - `filter_none_values`: Remove None values from a dictionary
 - `prepare_api_parameters`: Prepare parameters for Falcon API requests
-- `extract_resources`: Extract resources from an API response
-- `extract_first_resource`: Extract the first resource from an API response
 
 ## Example: Implementing a Hosts Module
 

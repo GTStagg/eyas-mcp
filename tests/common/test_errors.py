@@ -7,57 +7,13 @@ from unittest.mock import patch
 
 from falcon_mcp.common.api_scopes import API_SCOPE_REQUIREMENTS, get_required_scopes
 from falcon_mcp.common.errors import (
-    APIError,
-    AuthenticationError,
-    FalconError,
     _format_error_response,
     handle_api_response,
-    is_success_response,
 )
-
-
-class TestErrorClasses(unittest.TestCase):
-    """Test cases for the error classes."""
-
-    def test_falcon_error(self):
-        """Test FalconError class."""
-        error = FalconError("Test error")
-        self.assertEqual(str(error), "Test error")
-
-    def test_authentication_error(self):
-        """Test AuthenticationError class."""
-        error = AuthenticationError("Authentication failed")
-        self.assertEqual(str(error), "Authentication failed")
-        self.assertIsInstance(error, FalconError)
-
-    def test_api_error(self):
-        """Test APIError class."""
-        error = APIError(
-            "API request failed",
-            status_code=403,
-            body={"errors": [{"message": "Access denied"}]},
-            operation="TestOperation",
-        )
-        self.assertEqual(str(error), "API request failed")
-        self.assertEqual(error.status_code, 403)
-        self.assertEqual(error.body, {"errors": [{"message": "Access denied"}]})
-        self.assertEqual(error.operation, "TestOperation")
-        self.assertIsInstance(error, FalconError)
 
 
 class TestErrorUtils(unittest.TestCase):
     """Test cases for the error utility functions."""
-
-    def test_is_success_response(self):
-        """Test is_success_response function."""
-        # Success response
-        self.assertTrue(is_success_response({"status_code": 200}))
-
-        # Error responses
-        self.assertFalse(is_success_response({"status_code": 400}))
-        self.assertFalse(is_success_response({"status_code": 403}))
-        self.assertFalse(is_success_response({"status_code": 500}))
-        self.assertFalse(is_success_response({}))  # Missing status_code
 
     def test_get_required_scopes(self):
         """Test get_required_scopes function."""

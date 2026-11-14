@@ -796,7 +796,6 @@ class PoliciesModule(BaseModule):
                 operation="queryCombinedPreventionPolicies",
                 search_params={"filter": fql, "limit": POSTURE_PAGE_SIZE, "offset": len(policies)},
                 error_message="Failed to list prevention policies",
-                default_result=[],
             )
             if self._is_error(page):
                 return page
@@ -1483,7 +1482,6 @@ class PoliciesModule(BaseModule):
                     "sort": "precedence.asc",
                 },
                 error_message=f"Failed to list {policy_type} policies to reorder",
-                default_result=[],
             )
             if self._is_error(page):
                 return page

@@ -1901,19 +1901,19 @@ class RTRModule(BaseModule):
             if len(page_ids) < FALCON_SCRIPT_PAGE_SIZE or not new_ids:
                 break
 
-        scripts: list[dict[str, Any]] = []
-        for start in range(0, len(script_ids), FALCON_SCRIPT_PAGE_SIZE):
-            details = self._base_get_by_ids(
-                operation="RTR_GetFalconScripts",
-                ids=script_ids[start : start + FALCON_SCRIPT_PAGE_SIZE],
-                use_params=True,
-            )
-            if self._is_error(details):
-                return {}, details
-            scripts.extend(s for s in details if isinstance(s, dict))
+        details = self._base_get_by_ids_batched(
+            operation="RTR_GetFalconScripts",
+            ids=script_ids,
+            batch_size=FALCON_SCRIPT_PAGE_SIZE,
+            use_params=True,
+        )
+        if isinstance(details, dict):
+            return {}, details
 
         catalog = {
-            script["name"]: script for script in scripts if isinstance(script.get("name"), str)
+            script["name"]: script
+            for script in details
+            if isinstance(script, dict) and isinstance(script.get("name"), str)
         }
         self._falcon_script_cache = catalog
         return catalog, None

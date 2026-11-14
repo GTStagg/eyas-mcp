@@ -415,7 +415,6 @@ class IntelModule(BaseModule):
                 "format": format,
             },
             error_message="Failed to get MITRE report",
-            decode_binary=True,
         )
 
         # If it's an error, wrap in list for consistency

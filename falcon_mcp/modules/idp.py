@@ -335,18 +335,14 @@ class IdpModule(BaseModule):
         if not rule_ids:
             return self._build_pagination_envelope([], pagination)
 
-        selected = rule_ids[:limit]
-        rules: list[dict[str, Any]] = []
-        for start in range(0, len(selected), POLICY_RULE_BATCH_SIZE):
-            batch = selected[start : start + POLICY_RULE_BATCH_SIZE]
-            details = self._base_get_by_ids(
-                operation="get_policy_rules",
-                ids=batch,
-                use_params=True,
-            )
-            if self._is_error(details):
-                return [details]
-            rules.extend(details)
+        rules = self._base_get_by_ids_batched(
+            operation="get_policy_rules",
+            ids=rule_ids[:limit],
+            batch_size=POLICY_RULE_BATCH_SIZE,
+            use_params=True,
+        )
+        if self._is_error(rules):
+            return [rules]
 
         return self._build_pagination_envelope(rules, pagination)
 
@@ -866,16 +862,15 @@ class IdpModule(BaseModule):
         if not composite_ids:
             return [], scan, None
 
-        alerts: list[dict[str, Any]] = []
-        for start in range(0, len(composite_ids), ALERT_DETAILS_BATCH_SIZE):
-            details = self._base_get_by_ids(
-                operation="PostEntitiesAlertsV2",
-                ids=composite_ids[start : start + ALERT_DETAILS_BATCH_SIZE],
-                id_key="composite_ids",
-            )
-            if self._is_error(details):
-                return [], scan, details  # type: ignore[return-value]
-            alerts.extend(alert for alert in details if isinstance(alert, dict))
+        details = self._base_get_by_ids_batched(
+            operation="PostEntitiesAlertsV2",
+            ids=composite_ids,
+            batch_size=ALERT_DETAILS_BATCH_SIZE,
+            id_key="composite_ids",
+        )
+        if isinstance(details, dict):
+            return [], scan, details
+        alerts = [alert for alert in details if isinstance(alert, dict)]
         scan["scanned"] = len(alerts)
 
         matches: list[dict[str, Any]] = []
