@@ -43,6 +43,9 @@ MUTATING_TOOL_ALLOWLIST: set[str] = {
     "falcon_manage_host_grouping_tags",
     "falcon_contain_hosts",
     "falcon_lift_host_containment",
+    "falcon_hide_hosts",
+    "falcon_unhide_hosts",
+    "falcon_delete_hosts",
     # host_groups module
     "falcon_create_host_group",
     "falcon_update_host_group",

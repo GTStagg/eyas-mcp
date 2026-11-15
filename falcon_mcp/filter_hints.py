@@ -61,6 +61,12 @@ FILTER_HINTS: dict[str, str] = {
         "Use status:'contained' to find hosts in network containment. "
         "Ex: platform_name:'Windows'+status:'contained'"
     ),
+    "falcon_search_hidden_hosts": (
+        "Same fields as falcon_search_hosts: hostname, platform_name (Windows|Linux|Mac), "
+        "local_ip, external_ip, os_version, last_seen, first_seen. "
+        "Date filters: last_seen:>'now-30d' (relative). "
+        "Ex: platform_name:'Windows'+last_seen:<'now-90d'"
+    ),
     # === Cases ===
     "falcon_search_cases": (
         "Common fields: status (new|in_progress|closed|reopened), "
