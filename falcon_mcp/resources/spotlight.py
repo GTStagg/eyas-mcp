@@ -457,3 +457,22 @@ SEARCH_VULNERABILITIES_FQL_DOCUMENTATION = """Falcon Query Language (FQL) - Sear
 • Critical ExPRT rated vulnerabilities: cve.exprt_rating:'CRITICAL'
 • CISA KEV vulnerabilities: cve.is_cisa_kev:true
 """
+
+
+INSTALLED_PATCHES_FQL_DOCUMENTATION = """Falcon Query Language (FQL) - Installed Patches Guide
+
+Spotlight's record of the patches installed on each host.
+
+=== FILTERS ===
+Exact match only: aid, cid, hostname, reboot_required (true or false).
+Every filter can be negated with !. Wildcards and range comparisons are not supported.
+
+=== EXAMPLES ===
+• aid:'<host AID>'
+• hostname:'WS-0142'
+• reboot_required:true
+• reboot_required:true+hostname:!'BUILD-01'
+
+=== SORT ===
+hostname|asc or hostname|desc.
+"""

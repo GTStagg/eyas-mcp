@@ -29,6 +29,25 @@ Responses include `pagination.total` (the total number of records matching the f
 - "Show me open HIGH severity vulnerabilities"
 - "Find vulnerabilities on host xyz"
 
+### `falcon_get_installed_patches`
+
+**Required scopes:** `Vulnerabilities:read`
+
+Get the patches installed on hosts, with pending patches and whether a reboot is required.
+
+Use this to check a host's patch level, or find hosts waiting on a reboot to
+finish patching. Each record has `aid`, `hostname`, `device_type`,
+`reboot_required`, `active_patches`, `pending_patches`, `last_patch_confirmed`
+and `installed_patches` (each with `id` and `status`). For missing patches and
+open CVEs, use falcon_search_vulnerabilities.
+Responses include `pagination.total` and `pagination.next`.
+
+**Example prompts:**
+
+- "Which hosts need a reboot to finish patching?"
+- "What patches are installed on host 0123456789abcdef0123456789abcdef?"
+
 ## Resources
 
 - **`falcon://spotlight/vulnerabilities/fql-guide`**: Contains the guide for the `filter` param of the `falcon_search_vulnerabilities` tool.
+- **`falcon://spotlight/installed-patches/fql-guide`**: Contains the guide for the `filter` param of the `falcon_get_installed_patches` tool.

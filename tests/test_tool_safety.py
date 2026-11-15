@@ -41,6 +41,8 @@ READS_USING_WRITE_VERBS = frozenset(
         "GetCaseEntitiesByIDs",
         "GetQuarantineFiles",
         "GetSensorDetails",
+        # Fetches CVE intelligence by ID in a POST body
+        "GetVulnerabilities",
         "PostAggregatesAlertsV2",
         "PostDeviceDetailsV2",
         "PostEntitiesAlertsV2",

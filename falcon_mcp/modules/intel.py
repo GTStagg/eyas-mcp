@@ -5,7 +5,7 @@ This module provides tools for accessing and analyzing CrowdStrike Falcon intell
 """
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server import FastMCP
 from mcp.server.fastmcp.resources import TextResource
@@ -18,6 +18,7 @@ from falcon_mcp.resources.intel import (
     QUERY_ACTOR_ENTITIES_FQL_DOCUMENTATION,
     QUERY_INDICATOR_ENTITIES_FQL_DOCUMENTATION,
     QUERY_REPORT_ENTITIES_FQL_DOCUMENTATION,
+    QUERY_VULNERABILITIES_FQL_DOCUMENTATION,
 )
 
 logger = get_logger(__name__)
@@ -27,6 +28,55 @@ logger = get_logger(__name__)
 _DEFAULT_FULL_TEXT_CHARS = 20000
 _MAX_FULL_TEXT_CHARS = 200000
 _RICH_TEXT_PREFIX = "rich_text_"
+
+# CVE records list every affected product and linked report; a few CVEs list hundreds
+_MAX_AFFECTED_PRODUCTS = 25
+_MAX_RELATED_REPORTS = 20
+_MAX_SEARCH = 100
+_MAX_MALWARE_NAMES = 20
+_MAX_MALWARE_REPORTS = 10
+# Characters that would end or extend a quoted FQL value
+_FQL_SPECIAL = frozenset("'\"\\")
+
+def _trim_cve(record: dict[str, Any]) -> dict[str, Any]:
+    """Cap the long lists on a CVE record and say how many were left out."""
+    trimmed = dict(record)
+    for key, cap in (("affected_products", _MAX_AFFECTED_PRODUCTS), ("related_reports", _MAX_RELATED_REPORTS)):
+        values = record.get(key)
+        if isinstance(values, list) and len(values) > cap:
+            trimmed[key] = values[:cap]
+            trimmed[f"{key}_total"] = len(values)
+    return trimmed
+
+
+def _trim_malware(record: dict[str, Any], max_text_chars: int) -> dict[str, Any]:
+    """Shrink a malware family profile: cap its report list and flatten its ATT&CK mapping.
+
+    A well-known family's profile runs to tens of kilobytes, almost all of it the
+    list of related reports and the reports nested inside each ATT&CK technique.
+    """
+    trimmed = _drop_rich_text_duplicates(record)
+    reports = record.get("reports")
+    if isinstance(reports, list) and len(reports) > _MAX_MALWARE_REPORTS:
+        trimmed["reports"] = reports[:_MAX_MALWARE_REPORTS]
+        trimmed["reports_total"] = len(reports)
+    techniques: dict[str, dict[str, Any]] = {}
+    for entry in record.get("mitre") or []:
+        if isinstance(entry, dict):
+            key = str(entry.get("attack_id") or entry.get("technique_id"))
+            techniques.setdefault(
+                key,
+                {
+                    "technique_id": entry.get("technique_id"),
+                    "technique_name": entry.get("technique_name"),
+                    "tactic_id": entry.get("tactic_id"),
+                    "tactic_name": entry.get("tactic_name"),
+                },
+            )
+    if "mitre" in record:
+        trimmed["mitre"] = list(techniques.values())
+    clipped: dict[str, Any] = clip_long_strings(trimmed, max_text_chars)
+    return clipped
 
 
 def _drop_rich_text_duplicates(record: dict[str, Any]) -> dict[str, Any]:
@@ -88,6 +138,21 @@ class IntelModule(BaseModule):
             method=self.get_intel_actors,
             name="get_intel_actors",
         )
+        self._add_tool(
+            server=server,
+            method=self.search_intel_vulnerabilities,
+            name="search_intel_vulnerabilities",
+        )
+        self._add_tool(
+            server=server,
+            method=self.search_malware_families,
+            name="search_malware_families",
+        )
+        self._add_tool(
+            server=server,
+            method=self.search_intel_rules,
+            name="search_intel_rules",
+        )
 
     def register_resources(self, server: FastMCP) -> None:
         """Register resources with the MCP server.
@@ -136,6 +201,18 @@ class IntelModule(BaseModule):
         self._add_resource(
             server,
             search_reports_fql_resource,
+        )
+        self._add_resource(
+            server,
+            TextResource(
+                uri=AnyUrl("falcon://intel/vulnerabilities/fql-guide"),
+                name="falcon_search_intel_vulnerabilities_fql_guide",
+                description=(
+                    "Contains the guide for the `filter` param of the "
+                    "`falcon_search_intel_vulnerabilities` tool."
+                ),
+                text=QUERY_VULNERABILITIES_FQL_DOCUMENTATION,
+            ),
         )
 
     def query_actor_entities(
@@ -554,4 +631,176 @@ class IntelModule(BaseModule):
             ids=ids,
             max_text_chars=max_text_chars,
             include_rich_text=include_rich_text,
+        )
+
+    def search_intel_vulnerabilities(
+        self,
+        filter: str | None = Field(
+            default=None,
+            description=(
+                "FQL filter, e.g. exploit_status:'ActivelyUsed'+severity:'CRITICAL' or "
+                "cve:'CVE-2021-44228'. See `falcon://intel/vulnerabilities/fql-guide`."
+            ),
+        ),
+        q: str | None = Field(
+            default=None,
+            description="Free-text search across all fields, e.g. 'log4j'.",
+        ),
+        limit: int = Field(default=10, ge=1, le=_MAX_SEARCH, description=f"[1-{_MAX_SEARCH}]"),
+        offset: int | None = Field(default=None, description="The offset to start from."),
+        sort: str | None = Field(
+            default="publish_date|desc", description="e.g. publish_date|desc or cve|asc."
+        ),
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Look up CrowdStrike's intelligence on CVEs: whether they're exploited in the wild, severity, CVSS and linked adversaries.
+
+        Use this to judge how urgent a CVE is: `exploit_status` (e.g. ActivelyUsed),
+        `severity`, `cvss_v3_base`, `description`, `affected_products`, and the
+        `related_actors`, `related_threats` and `related_reports` CrowdStrike links to
+        it. Long lists are capped, with `<list>_total` giving the full count. For
+        which of this tenant's hosts are exposed, use falcon_search_vulnerabilities.
+        Responses include `pagination.total`.
+        """
+        cve_ids, pagination = self._base_search_with_meta(
+            operation="QueryVulnerabilities",
+            search_params={"filter": filter, "q": q, "limit": limit, "offset": offset, "sort": sort},
+            error_message="Failed to search CVE intelligence",
+        )
+        if self._is_error(cve_ids):
+            return self._format_fql_error_response(
+                [cve_ids], filter, QUERY_VULNERABILITIES_FQL_DOCUMENTATION
+            )
+        if not cve_ids:
+            return self._build_pagination_envelope([], pagination, filter)
+        records = self._base_get_by_ids(operation="GetVulnerabilities", ids=cve_ids)
+        if self._is_error(records):
+            return [records]
+        records = self._reorder_by_ids(cve_ids, records, id_field="cve")
+        return self._build_pagination_envelope([_trim_cve(r) for r in records], pagination, filter)
+
+    def search_malware_families(
+        self,
+        q: str | None = Field(
+            default=None,
+            description="Free-text search, e.g. 'emotet' or 'ransomware'. Give q or names.",
+        ),
+        names: list[str] | None = Field(
+            default=None,
+            description=(
+                f"Exact malware family names, at most {_MAX_MALWARE_NAMES}, e.g. ['Emotet', "
+                "'CobaltStrike']. Use q when unsure of the exact name."
+            ),
+        ),
+        limit: int = Field(default=10, ge=1, le=_MAX_SEARCH, description=f"[1-{_MAX_SEARCH}]"),
+        offset: int | None = Field(default=None, description="The offset to start from."),
+        max_text_chars: int = Field(
+            default=5000,
+            ge=500,
+            le=_MAX_FULL_TEXT_CHARS,
+            description="Longest text field kept whole; longer ones end with a truncation marker.",
+        ),
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Look up CrowdStrike's malware family profiles: what a family does, who uses it, its ATT&CK techniques, and whether it has been seen in this tenant.
+
+        Each profile has `name`, `slug`, `description`, `capabilities`, `motivation`,
+        `used_by`, `developed_by` and `associated_actors`, `mitre` (technique and tactic
+        IDs and names), `plugins`, `all_systems`, indicator and report counts, the
+        latest `reports` (capped, with `reports_total`), and `seen_in_environment`
+        (counts of related vulnerabilities, detections and sandbox results here).
+        Search with `q`, or fetch known families by exact `names`.
+        """
+        if names:
+            wanted = list(dict.fromkeys(n.strip() for n in names if isinstance(n, str) and n.strip()))
+            if not wanted or len(wanted) > _MAX_MALWARE_NAMES:
+                return [{"error": f"Pass between 1 and {_MAX_MALWARE_NAMES} malware family names."}]
+            bad = [n for n in wanted if set(n) & _FQL_SPECIAL]
+            if bad:
+                return [{"error": f"Malware family names can't contain quotes or backslashes: {bad}"}]
+            records, _ = self._base_search_with_meta(
+                operation="QueryMalwareEntities",
+                search_params={
+                    "filter": ",".join(f"name:'{n}'" for n in wanted),
+                    "limit": len(wanted),
+                },
+                error_message="Failed to get malware families",
+            )
+            if self._is_error(records):
+                return [records]
+            found_names = {str(r.get("name", "")).lower() for r in records}
+            not_found = [n for n in wanted if n.lower() not in found_names]
+            envelope: dict[str, Any] = {
+                "results": [_trim_malware(r, max_text_chars) for r in records],
+                "not_found": not_found,
+            }
+            if not_found:
+                # CrowdStrike's spelling can differ from the common one ("CobaltStrike")
+                envelope["hint"] = "Names must match exactly. Search with q to find the right name."
+            return envelope
+
+        if not q or not q.strip():
+            return [{"error": "Give q (a search phrase) or names."}]
+        records, pagination = self._base_search_with_meta(
+            operation="QueryMalwareEntities",
+            search_params={"q": q.strip(), "limit": limit, "offset": offset},
+            error_message="Failed to search malware families",
+        )
+        if self._is_error(records):
+            return [records]
+        return self._build_pagination_envelope(
+            [_trim_malware(r, max_text_chars) for r in records], pagination
+        )
+
+    def search_intel_rules(
+        self,
+        rule_type: Literal[
+            "yara-master",
+            "yara-update",
+            "snort-suricata-master",
+            "snort-suricata-update",
+            "common-event-format",
+            "netwitness",
+        ] = Field(
+            description=(
+                "Rule set type: yara-master or snort-suricata-master (complete sets), "
+                "yara-update or snort-suricata-update (recent changes), "
+                "common-event-format, netwitness."
+            ),
+        ),
+        q: str | None = Field(default=None, description="Free-text search, e.g. 'ransomware'."),
+        tags: list[str] | None = Field(default=None, description="Rule set tags to match."),
+        limit: int = Field(default=10, ge=1, le=_MAX_SEARCH, description=f"[1-{_MAX_SEARCH}]"),
+        offset: int | None = Field(default=None, description="The offset to start from."),
+        sort: str | None = Field(
+            default="created_date|desc", description="created_date|desc or last_modified_date|desc."
+        ),
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Search CrowdStrike's published YARA and Snort/Suricata rule sets and read what each covers.
+
+        Each rule set has `id`, `name`, `type`, `created_date`, `last_modified_date`,
+        `short_description`, `description` and `tags`. Rule files themselves download
+        only as zip or gzip archives and are not returned here.
+        Responses include `pagination.total`.
+        """
+        rule_ids, pagination = self._base_search_with_meta(
+            operation="QueryIntelRuleIds",
+            search_params={
+                "type": rule_type,
+                "q": q,
+                "tags": tags or None,
+                "limit": limit,
+                "offset": offset,
+                "sort": sort,
+            },
+            error_message="Failed to search intel rule sets",
+        )
+        if self._is_error(rule_ids):
+            return [rule_ids]
+        if not rule_ids:
+            return self._build_pagination_envelope([], pagination)
+        rules = self._base_get_by_ids(operation="GetIntelRuleEntities", ids=rule_ids, use_params=True)
+        if self._is_error(rules):
+            return [rules]
+        rules = self._reorder_by_ids(rule_ids, rules, id_field="id")
+        return self._build_pagination_envelope(
+            [_drop_rich_text_duplicates(r) for r in rules], pagination
         )

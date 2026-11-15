@@ -116,6 +116,12 @@ API_SCOPE_REQUIREMENTS = {
     "delete_rule_groups": ["Firewall Management:write"],
     # Spotlight operations
     "combinedQueryVulnerabilities": ["Vulnerabilities:read"],
+    "combinedQueryInstalledPatches": ["Vulnerabilities:read"],
+    "QueryVulnerabilities": ["Vulnerabilities (Falcon Intelligence):read"],
+    "GetVulnerabilities": ["Vulnerabilities (Falcon Intelligence):read"],
+    "QueryMalwareEntities": ["Malware Families (Falcon Intelligence):read"],
+    "QueryIntelRuleIds": ["Rules (Falcon Intelligence):read"],
+    "GetIntelRuleEntities": ["Rules (Falcon Intelligence):read"],
     # Discover operations
     "combined_applications": ["Assets:read"],
     "query_applications": ["Assets:read"],

@@ -709,3 +709,29 @@ QUERY_REPORT_ENTITIES_FQL_DOCUMENTATION = """Falcon Query Language (FQL) - Intel
   expression ('now-30d', quoted), or an unquoted Unix epoch integer. A quoted
   epoch is rejected
 """
+
+
+QUERY_VULNERABILITIES_FQL_DOCUMENTATION = """Falcon Query Language (FQL) - Intel Vulnerabilities Guide
+
+CrowdStrike's intelligence on CVEs: exploitation status, severity, CVSS scores,
+affected products, and the actors, threats and reports linked to each CVE.
+
+=== FILTERS ===
+cve, severity (CRITICAL, HIGH, MEDIUM, LOW, NONE), exploit_status (e.g. ActivelyUsed),
+cvss_v3_base.score, cvss_v3_base.severity, publish_date, updated_timestamp,
+affected_products.vendor, affected_products.product, community_identifiers,
+related_actors.name, related_threats.name, related_reports.serial_id, _all.
+
+=== EXAMPLES ===
+• cve:'CVE-2021-44228'
+• exploit_status:'ActivelyUsed'+severity:'CRITICAL'
+• cvss_v3_base.score:>=9+publish_date:>'2026-01-01'
+• affected_products.vendor:'Microsoft'+exploit_status:'ActivelyUsed'
+
+=== SORT ===
+publish_date|desc, cve|asc and other fields; an unknown field is rejected.
+
+=== NOTES ===
+• For a phrase across all fields, use the `q` parameter instead, e.g. q='log4j'.
+• For CVEs present on this tenant's hosts, use falcon_search_vulnerabilities (Spotlight).
+"""

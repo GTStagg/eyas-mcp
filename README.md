@@ -46,7 +46,7 @@ See the [`docs/`](docs/overview.md) folder for configuration, usage and module r
 | [Hosts](docs/modules/hosts.md) | Search and query hosts/devices, check online state and IP, MAC and login history, find hidden hosts, manage grouping tags, contain or lift containment, and hide, unhide or delete hosts |
 | [Hunting](docs/modules/hunting.md) | Search and read CrowdStrike's published hunting guides and hunting queries, with optional SPL translations |
 | [Identity Protection](docs/modules/idp.md) | Entity investigation, highest-risk identities, user-to-endpoint login history, host-to-identity correlation, Identity Protection sensors, and policy rules |
-| [Intel](docs/modules/intel.md) | Research threat actors, IOCs, and intelligence reports, and read full report and actor content |
+| [Intel](docs/modules/intel.md) | Research threat actors, IOCs, intelligence reports, CVE exploitation intelligence, malware families and their ATT&CK techniques, and YARA and Snort rule sets, and read full report and actor content |
 | [IOC](docs/modules/ioc.md) | Search, create, and remove custom indicators of compromise |
 | [MalQuery](docs/modules/malquery.md) | Search CrowdStrike's malware corpus by hash or byte pattern and check quota usage |
 | [NGSIEM](docs/modules/ngsiem.md) | Execute CQL queries against Next-Gen SIEM with an optional CQL pre-flight check and time and row limits, rebuild a host's process tree, look up CQL functions, and inspect data connections, parsers, and lookup files |
@@ -60,7 +60,7 @@ See the [`docs/`](docs/overview.md) folder for configuration, usage and module r
 | [Sensor Usage](docs/modules/sensor-usage.md) | Access and analyze sensor usage data |
 | [Serverless](docs/modules/serverless.md) | Search for vulnerabilities in serverless functions |
 | [Shield](docs/modules/shield.md) | SaaS security posture, checks, alerts, app inventory, and AI agents built in connected SaaS platforms |
-| [Spotlight](docs/modules/spotlight.md) | Manage and analyze vulnerability data and security assessments |
+| [Spotlight](docs/modules/spotlight.md) | Manage and analyze vulnerability data and security assessments, and see each host's installed and pending patches |
 | [Threat Graph](docs/modules/threatgraph.md) | Look up Threat Graph vertices, find which devices ran a file hash, and pivot along graph edges |
 | [Users and Roles](docs/modules/users.md) | Search users, see who holds which roles and what a role permits, grant or revoke roles, reset 2FA or passwords, and create, rename or delete users |
 | [Zero Trust Assessment](docs/modules/zero-trust-assessment.md) | Retrieve Zero Trust Assessment posture scores and sensor and OS hardening signals for hosts |
