@@ -61,6 +61,24 @@ FILTER_HINTS: dict[str, str] = {
         "Use status:'contained' to find hosts in network containment. "
         "Ex: platform_name:'Windows'+status:'contained'"
     ),
+    "falcon_search_ods_scans": (
+        "Fields: status (pending|running|completed|incomplete|canceled), initiated_from, "
+        "description, filecount.malicious, filecount.quarantined, targeted_platforms, "
+        "created_on, scan_started_on, scan_completed_on. Sort as field|desc. "
+        "Ex: created_on:>'now-7d'+filecount.malicious:>0"
+    ),
+    "falcon_search_ods_scan_hosts": (
+        "Fields: scan_id, host_id, status, filecount.malicious, filecount.quarantined, "
+        "started_on, completed_on. Ex: scan_id:'<scan id>'"
+    ),
+    "falcon_search_ods_malicious_files": (
+        "Fields: scan_id, host_id, filepath, filename, hash, severity, quarantined, "
+        "last_updated. Ex: scan_id:'<scan id>'+quarantined:false"
+    ),
+    "falcon_search_ods_scheduled_scans": (
+        "Fields: status, description, initiated_from, schedule.start_timestamp, created_on, "
+        "created_by, deleted, targeted_platforms. Ex: deleted:false"
+    ),
     "falcon_search_sandbox_reports": (
         "Sample fields need the sandbox. prefix (sha256 alone matches nothing): "
         "sandbox.sha256, sandbox.verdict, sandbox.threat_score, sandbox.submit_name, "

@@ -4,6 +4,7 @@
 
 ### Features
 
+* **ods:** new On-Demand Scans module. Reads (`On-demand scans (ODS):read`): `falcon_search_ods_scans`, `falcon_search_ods_scan_hosts`, `falcon_search_ods_malicious_files` and `falcon_search_ods_scheduled_scans`. Writes (`:write`, hidden by `--read-only`): `falcon_start_ods_scan` (Windows, Linux and macOS paths on hosts or host groups, quarantine off by default), `falcon_cancel_ods_scans` and `falcon_delete_ods_scheduled_scans` (by ID only)
 * **cases:** collect files from hosts into cases. `falcon_search_case_files` lists a case's files with their SHA256 (`Cases:read`); `falcon_get_rtr_file_metadata` reads a file's metadata on a host over RTR; `falcon_retrieve_rtr_file_to_case` pulls a file from a host straight into a case, and `falcon_add_rtr_session_file_to_case` attaches a file an RTR session already collected. File content never passes through the server
 * **sandbox:** report summaries and `falcon_get_sandbox_report` explain `origin` (endpoint quarantine, Fusion workflow, manual console submission and others), which can be filtered on; manual submissions keep the submitter's `user_name` and `user_uuid`; the tools explain how to find the endpoint a file came from; and `falcon_submit_to_sandbox` takes an optional `device_id` recorded with the submission
 * **rtr:** new `falcon_delete_rtr_session_file` removes a collected file from RTR session storage
