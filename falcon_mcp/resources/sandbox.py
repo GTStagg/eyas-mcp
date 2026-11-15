@@ -14,6 +14,13 @@ _REPORT_FIELDS = [
     ("sandbox.sha256", "String", "SHA256 of the analysed file. Ex: sandbox.sha256:'<sha256>'"),
     ("sandbox.submit_name", "String", "Name the file or URL was submitted under."),
     ("sandbox.environment_id", "Integer", "Sandbox environment, e.g. 160 for Windows 10 64-bit."),
+    (
+        "origin",
+        "String",
+        "Where the sample came from: quarantine (quarantined on an endpoint), workflow "
+        "(Fusion SOAR), uiproxy (submitted by a person in the console), android, "
+        "malware_agent, csglobalcommandengine. Ex: origin:'uiproxy'",
+    ),
     ("id", "String", "Report ID, which is also the submission ID."),
     ("created_timestamp", "Timestamp", "When the report was created. Ex: created_timestamp:>'now-7d'"),
 ]
@@ -63,5 +70,7 @@ created_timestamp.desc or created_timestamp.asc.
 • Sample fields need the `sandbox.` prefix: `sha256:'...'` silently matches nothing,
   `sandbox.sha256:'...'` works.
 • Has this file been detonated before? Search reports with sandbox.sha256.
+• Reports don't name the endpoint a file came from. Find it by SHA256 with
+  falcon_search_quarantined_files (for origin quarantine) or falcon_get_threatgraph_ran_on.
 """
 )

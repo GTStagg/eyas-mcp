@@ -65,8 +65,9 @@ FILTER_HINTS: dict[str, str] = {
         "Sample fields need the sandbox. prefix (sha256 alone matches nothing): "
         "sandbox.sha256, sandbox.verdict, sandbox.threat_score, sandbox.submit_name, "
         "sandbox.environment_id; also verdict (malicious|suspicious|no specific threat|"
-        "whitelisted), id, created_timestamp. "
-        "Ex: verdict:'malicious'+created_timestamp:>'now-7d'"
+        "whitelisted), origin (quarantine|workflow|uiproxy|android: uiproxy is a manual "
+        "console submission), id, created_timestamp. "
+        "Ex: verdict:'malicious'+origin:'quarantine'"
     ),
     "falcon_search_sandbox_submissions": (
         "Fields: state (created|running|success|error), sandbox.sha256, id, "
