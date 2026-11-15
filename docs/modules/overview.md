@@ -9,6 +9,7 @@ eyas-mcp provides the following modules. Each module requires specific CrowdStri
 | Module | API Scopes | Description |
 |--------|-------------------|-------------|
 | [AgentWorks](agentworks.md) | `Charlotte AI Agent Definition:read`, `Charlotte AI Agent Definition:write` | Calling, listing, and observing CrowdStrike AgentWorks (agentic-studio) Charlotte AI agents and their execution traces |
+| [Audit Log](audit-log.md) | `Audit:read` | This module provides read-only tools for the Falcon audit log: who did what in the tenant, from console logins and API client changes to policy, workflow and case edits |
 | [Case Management](cases.md) | `Case Templates:read`, `Cases:read`, `Cases:write` | Managing CrowdStrike cases, including searching, creating, updating, and managing evidence and tags |
 | [Cloud Security](cloud.md) | `Cloud Groups V2:read`, `Cloud Security API Assets:read`, `Cloud Security API Detections:read`, `Cloud Security API Risks:read`, `Cloud Security Policies:read`, `Falcon Container Image:read`, `Cloud Security Policies:write` | Accessing and analyzing CrowdStrike Falcon cloud resources like Kubernetes & Containers Inventory, Images Vulnerabilities, Cloud Assets, IOM Findings, CSPM Suppression Rules, Cloud Risks, Cloud Groups, and Cloud Insights |
 | [Correlation Rules](correlationrules.md) | `Correlation Rules:read`, `Correlation Rules:write` | Correlation Rules module for CrowdStrike Falcon. |

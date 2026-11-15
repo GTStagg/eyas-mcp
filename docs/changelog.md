@@ -7,6 +7,7 @@
 
 ### Features
 
+* **audit:** new read-only Audit Log module. `falcon_search_audit_log` searches who did what in the tenant (console logins, API client and secret changes, policy, workflow, case and detection changes, API requests) by time window, actor, category, action, target, country and user agent, and `falcon_get_audit_log_results` pages through a query job or picks up one that was still running. Needs `Audit:read`
 * **hosts:** new read-only host context tools: `falcon_get_host_online_state` (online, offline or unknown, up to 100 hosts), `falcon_get_host_network_history` (IP and MAC address history, up to 500 hosts), `falcon_get_host_login_history` (recent logins per host, or interactive logins in a time window with `interactive_only`) and `falcon_search_hidden_hosts`. IDs that match no host come back in `not_found` instead of failing the call
 * **hosts:** new write tools `falcon_hide_hosts`, `falcon_unhide_hosts` and `falcon_delete_hosts` (permanent). They need `Hosts:write` and are hidden by `--read-only`
 * **falcon complete:** new Message Center write tools: `falcon_create_message_center_case`, `falcon_add_message_center_case_comment` and `falcon_add_message_center_case_attachment` open a case with Falcon Complete or Support, reply on one and attach a file. They are write tools, hidden by `--read-only`, and need `Message Center:write` ([#22](https://github.com/GTStagg/eyas-mcp/pull/22))

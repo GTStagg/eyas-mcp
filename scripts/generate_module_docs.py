@@ -34,6 +34,10 @@ MODULE_METADATA: dict[str, dict[str, Any]] = {
     "agentworks": {
         "title": "AgentWorks",
     },
+    "audit": {
+        "title": "Audit Log",
+        "slug": "audit-log",
+    },
     "cases": {
         "title": "Case Management",
         "slug": "cases",
@@ -358,6 +362,14 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
     ],
     "falcon_get_host_details": [
         "Get the full details for host device abc123",
+    ],
+    "falcon_search_audit_log": [
+        "Who logged in to the Falcon console in the last 7 days?",
+        "Which API clients were created or changed this month?",
+        "Show everything user jdoe did yesterday",
+    ],
+    "falcon_get_audit_log_results": [
+        "Get the next page of that audit log query",
     ],
     "falcon_get_host_online_state": [
         "Is host 0123456789abcdef0123456789abcdef online right now?",
