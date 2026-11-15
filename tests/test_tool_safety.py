@@ -46,6 +46,8 @@ READS_USING_WRITE_VERBS = frozenset(
         "PostEntitiesAlertsV2",
         "PostMalQueryExactSearchV1",
         "PreviewRuleV1",
+        # Checks which sandbox samples exist; changes nothing
+        "QuerySampleV1",
         "QueryDeviceLoginHistory",
         "QueryDeviceLoginHistoryV2",
         "QueryGetNetworkAddressHistoryV1",

@@ -59,6 +59,7 @@ from falcon_mcp.modules.policies import PoliciesModule
 from falcon_mcp.modules.quarantine import QuarantineModule
 from falcon_mcp.modules.recon import ReconModule
 from falcon_mcp.modules.rtr import RTRModule
+from falcon_mcp.modules.sandbox import SandboxModule
 from falcon_mcp.modules.scheduled_reports import ScheduledReportsModule
 from falcon_mcp.modules.users import UsersModule
 from falcon_mcp.modules.zero_trust_assessment import ZeroTrustAssessmentModule
@@ -142,6 +143,20 @@ CASES: list[ReorderCase] = [
         method="search_hidden_hosts",
         id_field="device_id",
         site=("falcon_mcp/modules/hosts.py", "search_hidden_hosts"),
+    ),
+    ReorderCase(
+        tool="falcon_search_sandbox_reports",
+        module_cls=SandboxModule,
+        method="search_sandbox_reports",
+        id_field="id",
+        site=("falcon_mcp/modules/sandbox.py", "search_sandbox_reports"),
+    ),
+    ReorderCase(
+        tool="falcon_search_sandbox_submissions",
+        module_cls=SandboxModule,
+        method="search_sandbox_submissions",
+        id_field="id",
+        site=("falcon_mcp/modules/sandbox.py", "search_sandbox_submissions"),
     ),
     ReorderCase(
         tool="falcon_search_users",

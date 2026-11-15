@@ -54,6 +54,7 @@ See the [`docs/`](docs/overview.md) folder for configuration, usage and module r
 | [Quarantine](docs/modules/quarantine.md) | Search quarantine records, preview action counts, and release, unrelease, or delete quarantined files |
 | [Real Time Response](docs/modules/rtr.md) | Audit and summarize RTR sessions, run read-only triage on one or many hosts, wait until hosts are ready (optionally proven by a test script), run CrowdStrike-published Falcon scripts, and manage and run a custom RTR script library |
 | [Recon](docs/modules/recon.md) | Search and aggregate Falcon Intelligence Recon notifications (recon alerts), monitoring rules, and exposed-data records for dark web, leaked credentials, and typosquatting, and preview prospective rule noise |
+| [Falcon Sandbox](docs/modules/sandbox.md) | Search sandbox reports and submissions, read a trimmed report, check for uploaded samples, submit files or URLs for detonation, upload samples, and delete reports or samples |
 | [Scheduled Reports](docs/modules/scheduled-reports.md) | Manage scheduled reports and download report files |
 | [Sensor Usage](docs/modules/sensor-usage.md) | Access and analyze sensor usage data |
 | [Serverless](docs/modules/serverless.md) | Search for vulnerabilities in serverless functions |

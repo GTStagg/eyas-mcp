@@ -34,6 +34,7 @@ eyas-mcp provides the following modules. Each module requires specific CrowdStri
 | [Quarantine](quarantine.md) | `Quarantined Files:read`, `Quarantined Files:write` | Investigating quarantined files and applying quarantine actions during triage and remediation workflows |
 | [Recon](recon.md) | `Monitoring rules (Falcon Intelligence Recon):read` | Searching Falcon Intelligence Recon notifications, monitoring rules, and exposed-data records |
 | [Real Time Response](rtr.md) | `Hosts:read`, `Real time response:read`, `real-time-response-audit:read`, `Real time response (admin):write`, `Real time response:write` | Initiating and inspecting RTR sessions, for executing read-only RTR commands during host investigations, and for managing and running scripts from the tenant's custom RTR script library |
+| [Falcon Sandbox](sandbox.md) | `Sandbox (Falcon Intelligence):read`, `Sandbox (Falcon Intelligence):write` | Falcon Sandbox (Falcon Intelligence): search detonation reports and submissions, read a trimmed report, submit a file or URL for analysis, upload samples, and delete reports or samples |
 | [Scheduled Reports](scheduled-reports.md) | `Scheduled Reports:read` | Accessing and managing CrowdStrike Falcon scheduled reports and scheduled searches |
 | [Sensor Usage](sensor-usage.md) | `Sensor Usage:read` | Accessing CrowdStrike Falcon sensor usage data |
 | [Serverless](serverless.md) | `Falcon Container Image:read` | Accessing and managing CrowdStrike Falcon Serverless Vulnerabilities |
