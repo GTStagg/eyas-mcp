@@ -21,6 +21,12 @@ API_SCOPE_REQUIREMENTS = {
     "PostDeviceDetailsV2": ["Hosts:read"],
     "UpdateDeviceTags": ["Hosts:write"],
     "PerformActionV2": ["Hosts:write"],
+    "DevicesActionsDeleteV1": ["Hosts:write"],
+    "GetOnlineState_V1": ["Hosts:read"],
+    "QueryGetNetworkAddressHistoryV1": ["Hosts:read"],
+    "QueryDeviceLoginHistory": ["Hosts:read"],
+    "QueryDeviceLoginHistoryV2": ["Hosts:read"],
+    "QueryHiddenDevices": ["Hosts:read"],
     # Falcon Complete: Message Center
     "QueryCasesIdsByFilter": ["Message Center:read"],
     "GetCaseEntitiesByIDs": ["Message Center:read"],

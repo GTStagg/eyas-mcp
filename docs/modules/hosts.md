@@ -108,6 +108,130 @@ filtering on `status` (`lift_containment_pending`, then `normal`).
 
 - "Lift containment on host 0123456789abcdef0123456789abcdef"
 
+### `falcon_get_host_online_state`
+
+**Required scopes:** `Hosts:read`
+
+Check whether hosts are online right now: `state` is online, offline or unknown.
+
+Use this before starting an RTR session, containing a host or running a script,
+to know whether the sensor will act now or queue the request. Returns
+`results` (one record per host with `id`, `state` and `last_seen`) and
+`not_found` (IDs that match no host).
+
+**Example prompts:**
+
+- "Is host 0123456789abcdef0123456789abcdef online right now?"
+
+### `falcon_get_host_network_history`
+
+**Required scopes:** `Hosts:read`
+
+Get the history of IP and MAC addresses each host has used.
+
+Use this to tie an IP address seen at a point in time back to the host that held
+it, or to see where a host has been on the network. Returns `results` (one
+record per host with `device_id` and `history`, a list of `ip_address`,
+`mac_address` and `timestamp`) and `not_found` (IDs that match no host).
+To find hosts by their current IP, use falcon_search_hosts with `local_ip` or
+`external_ip`.
+
+**Example prompts:**
+
+- "Which IP addresses has host 0123456789abcdef0123456789abcdef used?"
+
+### `falcon_get_host_login_history`
+
+**Required scopes:** `Hosts:read`
+
+Get the users who recently logged in to each host, with login times.
+
+Use this to see who was on a host around an incident, or which accounts touch a
+machine. Returns `results` (one record per host with `device_id` and
+`recent_logins`, a list of `user_name` and `login_time`) and `not_found` (IDs
+that match no host). To go the other way, from a user to the hosts they used,
+use falcon_get_user_endpoint_history.
+
+**Example prompts:**
+
+- "Who logged in to host 0123456789abcdef0123456789abcdef recently?"
+- "Show interactive logins on this host over the last 30 days"
+
+### `falcon_search_hidden_hosts`
+
+**Required scopes:** `Hosts:read`
+
+Search hidden hosts: hosts removed from the console, which falcon_search_hosts does not return.
+
+Hidden hosts drop out of Falcon's reporting, so check them when scoping an
+incident or when a known machine is missing from host searches. Returns full
+host details (`host_hidden_status` is `hidden`). Restore a host with
+falcon_unhide_hosts.
+Responses include `pagination.total` (the total number of records matching the filter, or null when the API does not report a count).
+
+**Example prompts:**
+
+- "List hidden Windows hosts"
+- "Is host WS-0142 hidden?"
+
+### `falcon_hide_hosts`
+
+> [!CAUTION]
+> This tool performs destructive operations.
+
+**Required scopes:** `Hosts:write`
+
+Hide hosts: take them out of the console and out of Falcon's reporting.
+
+Use this for decommissioned or duplicate hosts. A hidden host goes silent:
+Falcon reports nothing new for it, so never hide a host that is part of an
+active investigation. Reverse it with falcon_unhide_hosts;
+find hidden hosts with falcon_search_hidden_hosts. Hiding an already hidden host
+is a no-op. Returns per-host results as `succeeded_ids` and `resources`; on a
+partial failure, `partial_failure` is true and `failed_ids` and `errors` say
+which hosts were not hidden and why.
+
+**Example prompts:**
+
+- "Hide the duplicate host record 0123456789abcdef0123456789abcdef"
+
+### `falcon_unhide_hosts`
+
+> [!NOTE]
+> This tool modifies data.
+
+**Required scopes:** `Hosts:write`
+
+Unhide hosts: restore hidden hosts to the console and to Falcon's reporting.
+
+Unhiding a host that is not hidden is a no-op. Returns per-host results as
+`succeeded_ids` and `resources`; on a partial failure, `partial_failure` is true
+and `failed_ids` and `errors` say which hosts were not restored and why.
+
+**Example prompts:**
+
+- "Unhide host 0123456789abcdef0123456789abcdef"
+
+### `falcon_delete_hosts`
+
+> [!CAUTION]
+> This tool performs destructive operations.
+
+**Required scopes:** `Hosts:write`
+
+Permanently delete hosts from Falcon. This cannot be undone.
+
+Use this only for hosts that are gone for good, such as retired machines. To
+take a host out of view reversibly, use falcon_hide_hosts instead. Returns
+per-host results as `succeeded_ids` and `resources`; when the API confirms only
+some hosts, `partial_failure` is true and `failed_ids` and `errors` say which.
+Verify afterwards with falcon_search_hosts and falcon_search_hidden_hosts before
+retrying.
+
+**Example prompts:**
+
+- "Permanently delete retired host 0123456789abcdef0123456789abcdef"
+
 ## Resources
 
 - **`falcon://hosts/search/fql-guide`**: Contains the guide for the `filter` param of the `falcon_search_hosts` tool.

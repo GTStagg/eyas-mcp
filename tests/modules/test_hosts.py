@@ -26,8 +26,48 @@ class TestHostsModule(TestModules):
             "falcon_manage_host_grouping_tags",
             "falcon_contain_hosts",
             "falcon_lift_host_containment",
+            "falcon_get_host_online_state",
+            "falcon_get_host_network_history",
+            "falcon_get_host_login_history",
+            "falcon_search_hidden_hosts",
+            "falcon_hide_hosts",
+            "falcon_unhide_hosts",
+            "falcon_delete_hosts",
         ]
         self.assert_tools_registered(expected_tools)
+
+    def test_host_context_annotations(self):
+        """Reads are read-only; hiding and deleting are destructive, unhiding is not."""
+        self.module.register_tools(self.mock_server)
+        for name in (
+            "falcon_get_host_online_state",
+            "falcon_get_host_network_history",
+            "falcon_get_host_login_history",
+            "falcon_search_hidden_hosts",
+        ):
+            with self.subTest(tool=name):
+                self.assertIs(self._annotations(name).readOnlyHint, True)
+        for name, destructive in (
+            ("falcon_hide_hosts", True),
+            ("falcon_unhide_hosts", False),
+            ("falcon_delete_hosts", True),
+        ):
+            with self.subTest(tool=name):
+                self.assert_tool_annotations(
+                    name,
+                    ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=destructive,
+                        idempotentHint=True,
+                        openWorldHint=True,
+                    ),
+                )
+
+    def _annotations(self, name):
+        for call in self.mock_server.add_tool.call_args_list:
+            if call.kwargs.get("name") == name:
+                return call.kwargs["annotations"]
+        raise AssertionError(f"{name} not registered")
 
     def test_contain_hosts_annotations(self):
         """Containment cuts hosts off the network, so it is destructive."""
@@ -820,6 +860,236 @@ class TestHostsModule(TestModules):
 
         self.assertIn("error", result)
         self.assertIn("device not eligible", result["error"])
+
+
+    # ----------------------------------------------------------------- #
+    # host context reads
+    # ----------------------------------------------------------------- #
+    UNKNOWN = "f" * 32
+
+    @staticmethod
+    def _ok(resources, status_code=200):
+        return {"status_code": status_code, "body": {"resources": resources, "errors": []}}
+
+    def _unknown_id(self, status_code=400):
+        return {
+            "status_code": status_code,
+            "body": {
+                "resources": [],
+                "errors": [{"code": 400, "message": f"invalid device id [{self.UNKNOWN}]"}],
+            },
+        }
+
+    def test_online_state_request_shape(self):
+        """IDs go in the query string; results come back with an empty not_found."""
+        record = {"id": self.AID_1, "state": "online", "last_seen": "2026-11-14T00:00:00Z"}
+        self.mock_client.command.return_value = self._ok([record])
+
+        result = self.module.get_host_online_state(ids=[self.AID_1.upper()])
+
+        self.mock_client.command.assert_called_once_with(
+            "GetOnlineState_V1", parameters={"ids": [self.AID_1]}
+        )
+        self.assertEqual(result, {"results": [record], "not_found": []})
+
+    def test_online_state_caps_at_100(self):
+        result = self.module.get_host_online_state(ids=[f"{i:032x}" for i in range(101)])
+        self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()
+
+    def test_unknown_id_is_set_aside_and_the_rest_retried(self):
+        """One unknown AID fails the whole call, so the known hosts are retried alone."""
+        record = {"id": self.AID_1, "state": "offline"}
+        self.mock_client.command.side_effect = [
+            self._unknown_id(status_code=200),  # online state reports it under 200
+            {
+                "status_code": 400,
+                "body": {
+                    "resources": [{"device_id": self.AID_1}],
+                    "errors": [{"message": f"invalid device id [{self.UNKNOWN}]"}],
+                },
+            },
+            self._ok([record]),
+        ]
+
+        result = self.module.get_host_online_state(ids=[self.AID_1, self.UNKNOWN])
+
+        calls = self.mock_client.command.call_args_list
+        self.assertEqual(calls[1][0][0], "PostDeviceDetailsV2")
+        self.assertEqual(calls[2][1]["parameters"], {"ids": [self.AID_1]})
+        self.assertEqual(result, {"results": [record], "not_found": [self.UNKNOWN]})
+
+    def test_all_unknown_ids_skip_the_retry(self):
+        self.mock_client.command.side_effect = [self._unknown_id(), self._unknown_id()]
+
+        result = self.module.get_host_network_history(ids=[self.UNKNOWN])
+
+        self.assertEqual(self.mock_client.command.call_count, 2)
+        self.assertEqual(result, {"results": [], "not_found": [self.UNKNOWN]})
+
+    def test_unknown_id_with_failed_lookup_returns_the_original_error(self):
+        """If host details can't say which IDs exist, nothing is guessed."""
+        self.mock_client.command.side_effect = [
+            self._unknown_id(),
+            {"status_code": 403, "body": {"errors": [{"message": "access denied"}]}},
+        ]
+
+        result = self.module.get_host_network_history(ids=[self.AID_1, self.UNKNOWN])
+
+        self.assertIn("error", result)
+        self.assertEqual(result["details"]["status_code"], 400)
+        self.assertEqual(self.mock_client.command.call_count, 2)
+
+    def test_errors_under_200_are_reported(self):
+        self.mock_client.command.return_value = {
+            "status_code": 200,
+            "body": {"resources": [], "errors": [{"message": "service unavailable"}]},
+        }
+
+        result = self.module.get_host_online_state(ids=[self.AID_1])
+
+        self.assertIn("error", result)
+        self.assertIn("service unavailable", result["error"])
+
+    def test_network_history_request_shape_and_cap(self):
+        record = {"device_id": self.AID_1, "history": []}
+        self.mock_client.command.return_value = self._ok([record])
+
+        result = self.module.get_host_network_history(ids=[self.AID_1])
+
+        self.mock_client.command.assert_called_once_with(
+            "QueryGetNetworkAddressHistoryV1", body={"ids": [self.AID_1]}
+        )
+        self.assertEqual(result["results"], [record])
+
+        self.mock_client.command.reset_mock()
+        result = self.module.get_host_network_history(ids=[f"{i:032x}" for i in range(501)])
+        self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()
+
+    def test_login_history_defaults_to_recent_logins(self):
+        self.mock_client.command.return_value = self._ok([])
+
+        self.module.get_host_login_history(
+            ids=[self.AID_1], interactive_only=False, since="now-7d", until="now", limit=10
+        )
+
+        self.mock_client.command.assert_called_once_with(
+            "QueryDeviceLoginHistory", body={"ids": [self.AID_1]}
+        )
+
+    def test_login_history_interactive_uses_the_window(self):
+        self.mock_client.command.return_value = self._ok([])
+
+        self.module.get_host_login_history(
+            ids=[self.AID_1], interactive_only=True, since="now-30d", until="now", limit=50
+        )
+
+        self.mock_client.command.assert_called_once_with(
+            "QueryDeviceLoginHistoryV2",
+            parameters={"from": "now-30d", "to": "now", "limit": 50},
+            body={"ids": [self.AID_1]},
+        )
+
+    def test_login_history_interactive_caps_at_10(self):
+        ids = [f"{i:032x}" for i in range(11)]
+        result = self.module.get_host_login_history(
+            ids=ids, interactive_only=True, since="now-7d", until="now", limit=10
+        )
+        self.assertIn("error", result)
+        self.mock_client.command.assert_not_called()
+
+        self.mock_client.command.return_value = self._ok([])
+        result = self.module.get_host_login_history(
+            ids=ids, interactive_only=False, since="now-7d", until="now", limit=10
+        )
+        self.assertNotIn("error", result)
+
+    def test_search_hidden_hosts(self):
+        """Hidden host IDs are hydrated through the regular host details endpoint."""
+        self.mock_client.command.side_effect = [
+            {
+                "status_code": 200,
+                "body": {
+                    "resources": ["h1", "h2"],
+                    "meta": {"pagination": {"offset": 0, "limit": 10, "total": 2}},
+                },
+            },
+            self._ok([{"device_id": "h2"}, {"device_id": "h1"}]),
+        ]
+
+        result = self.module.search_hidden_hosts(
+            filter="platform_name:'Windows'", limit=10, offset=None, sort=None
+        )
+
+        calls = self.mock_client.command.call_args_list
+        self.assertEqual(calls[0][0][0], "QueryHiddenDevices")
+        self.assertEqual(calls[0][1]["parameters"]["filter"], "platform_name:'Windows'")
+        self.assertEqual(calls[1][0][0], "PostDeviceDetailsV2")
+        self.assertEqual([r["device_id"] for r in result["results"]], ["h1", "h2"])
+        self.assertEqual(result["pagination"]["total"], 2)
+
+    # ----------------------------------------------------------------- #
+    # hide / unhide / delete
+    # ----------------------------------------------------------------- #
+    def test_hide_and_unhide_request_shape(self):
+        for tool, action in (
+            (self.module.hide_hosts, "hide_host"),
+            (self.module.unhide_hosts, "unhide_host"),
+        ):
+            with self.subTest(action=action):
+                self.mock_client.command.reset_mock()
+                self.mock_client.command.return_value = self._action_response([self.AID_1])
+
+                result = tool(ids=[self.AID_1])
+
+                self.mock_client.command.assert_called_once_with(
+                    "PerformActionV2",
+                    parameters={"action_name": action},
+                    body={"ids": [self.AID_1]},
+                )
+                self.assertEqual(result["succeeded_ids"], [self.AID_1])
+
+    def test_delete_hosts_sends_ids_only(self):
+        """The endpoint also takes a filter; the tool never sends one."""
+        self.mock_client.command.return_value = self._action_response([self.AID_1, self.AID_2])
+
+        result = self.module.delete_hosts(ids=[self.AID_1, self.AID_2])
+
+        self.mock_client.command.assert_called_once_with(
+            "DevicesActionsDeleteV1", body={"ids": [self.AID_1, self.AID_2]}
+        )
+        self.assertEqual(result["action"], "delete")
+        self.assertEqual(result["succeeded_ids"], [self.AID_1, self.AID_2])
+        self.assertNotIn("partial_failure", result)
+
+    def test_delete_hosts_without_confirmation_is_not_reported_as_success(self):
+        self.mock_client.command.return_value = {"status_code": 202, "body": {"resources": []}}
+
+        result = self.module.delete_hosts(ids=[self.AID_1])
+
+        self.assertEqual(result["succeeded_ids"], [])
+        self.assertEqual(result["failed_ids"], [self.AID_1])
+        self.assertTrue(result["partial_failure"])
+
+    def test_host_writes_reject_bad_ids_without_calling_api(self):
+        for tool in (self.module.hide_hosts, self.module.unhide_hosts, self.module.delete_hosts):
+            for ids in ([], ["WORKSTATION-01"], [f"{i:032x}" for i in range(101)]):
+                with self.subTest(tool=tool.__name__, count=len(ids)):
+                    self.mock_client.command.reset_mock()
+                    self.assertIn("error", tool(ids=ids))
+                    self.mock_client.command.assert_not_called()
+
+    def test_delete_hosts_forbidden(self):
+        self.mock_client.command.return_value = {
+            "status_code": 403,
+            "body": {"errors": [{"message": "access denied"}]},
+        }
+
+        result = self.module.delete_hosts(ids=[self.AID_1])
+
+        self.assertIn("error", result)
+        self.assertIn("required_scopes", result)
 
 
 if __name__ == "__main__":

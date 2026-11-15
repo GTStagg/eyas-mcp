@@ -136,6 +136,13 @@ CASES: list[ReorderCase] = [
         site=("falcon_mcp/modules/hosts.py", "search_hosts"),
     ),
     ReorderCase(
+        tool="falcon_search_hidden_hosts",
+        module_cls=HostsModule,
+        method="search_hidden_hosts",
+        id_field="device_id",
+        site=("falcon_mcp/modules/hosts.py", "search_hidden_hosts"),
+    ),
+    ReorderCase(
         tool="falcon_search_detections",
         module_cls=DetectionsModule,
         method="search_detections",

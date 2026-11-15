@@ -4,6 +4,8 @@
 
 ### Features
 
+* **hosts:** new read-only host context tools: `falcon_get_host_online_state` (online, offline or unknown, up to 100 hosts), `falcon_get_host_network_history` (IP and MAC address history, up to 500 hosts), `falcon_get_host_login_history` (recent logins per host, or interactive logins in a time window with `interactive_only`) and `falcon_search_hidden_hosts`. IDs that match no host come back in `not_found` instead of failing the call
+* **hosts:** new write tools `falcon_hide_hosts`, `falcon_unhide_hosts` and `falcon_delete_hosts` (permanent). They need `Hosts:write` and are hidden by `--read-only`
 * **falcon complete:** new Message Center write tools: `falcon_create_message_center_case`, `falcon_add_message_center_case_comment` and `falcon_add_message_center_case_attachment` open a case with Falcon Complete or Support, reply on one and attach a file. They are write tools, hidden by `--read-only`, and need `Message Center:write` ([#22](https://github.com/GTStagg/eyas-mcp/pull/22))
 * **falcon complete:** new read-only Falcon Complete module: search and get Message Center cases, read a case's message thread, and count cases or Falcon Complete dashboard data (escalations, remediations, blocklist and allowlist requests, alerts) ([#21](https://github.com/GTStagg/eyas-mcp/pull/21))
 * **host groups:** `falcon_perform_host_group_action` takes `device_ids` as a safer alternative to `filter` (exactly one is required), accepts only `add-hosts` or `remove-hosts`, and refuses dynamic or unknown target groups before changing anything ([#14](https://github.com/GTStagg/eyas-mcp/pull/14))

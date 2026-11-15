@@ -5,6 +5,7 @@ This module provides tools for accessing and managing CrowdStrike Falcon hosts/d
 """
 
 import re
+from collections.abc import Callable
 from textwrap import dedent
 from typing import Any
 
@@ -37,19 +38,32 @@ MAX_TAG_DEVICE_IDS = 5000
 MAX_TAGS_PER_REQUEST = 50
 
 
-# Containment goes through PerformActionV2, which takes the action as a query param
-CONTAINMENT_OPERATION = "PerformActionV2"
+# Containment and hiding go through PerformActionV2, which takes the action as a query
+# param
+HOST_ACTION_OPERATION = "PerformActionV2"
 
 # A Falcon agent ID (AID) is 32 hex characters
 DEVICE_ID_PATTERN = re.compile(r"[0-9a-fA-F]{32}")
 
-# The swagger states no cap. Containment takes hosts off the network, so one call is
-# held to a batch small enough to review and verify.
+# The swagger states no cap for host actions. They take hosts off the network or out of
+# view, so one call is held to a batch small enough to review and verify.
 MAX_CONTAINMENT_DEVICE_IDS = 100
 
+# Caps the API enforces (checked live): GetOnlineState_V1 takes 100 IDs, the address and
+# login history endpoints 500, and the interactive (v2) login history 10.
+MAX_ONLINE_STATE_IDS = 100
+MAX_HISTORY_IDS = 500
+MAX_INTERACTIVE_LOGIN_IDS = 10
 
-def _validate_device_ids(ids: list[str] | None) -> tuple[list[str], str | None]:
-    """Normalize and check device IDs before any containment call.
+# The per-host read endpoints fail a whole call when one ID is unknown, with this
+# message (GetOnlineState_V1 under HTTP 200, the history endpoints under 400).
+UNKNOWN_HOST_MESSAGE = "invalid device id"
+
+
+def _validate_device_ids(
+    ids: list[str] | None, max_ids: int = MAX_CONTAINMENT_DEVICE_IDS
+) -> tuple[list[str], str | None]:
+    """Normalize and check device IDs before any per-host call.
 
     Returns the deduplicated, lowercased IDs in their original order, or an error
     message when any ID is malformed or the count is out of range.
@@ -78,13 +92,22 @@ def _validate_device_ids(ids: list[str] | None) -> tuple[list[str], str | None]:
             "hexadecimal characters. Find AIDs with falcon_search_hosts."
         )
 
-    if len(normalized) > MAX_CONTAINMENT_DEVICE_IDS:
+    if len(normalized) > max_ids:
         return [], (
-            f"Too many device IDs: {len(normalized)}. At most "
-            f"{MAX_CONTAINMENT_DEVICE_IDS} hosts can be changed per call."
+            f"Too many device IDs: {len(normalized)}. At most {max_ids} hosts per call."
         )
 
     return normalized, None
+
+
+def _rejects_unknown_host(response: dict[str, Any]) -> bool:
+    """True when the API failed a per-host call because an ID matched no host."""
+    errors = (response.get("body") or {}).get("errors") or []
+    return any(
+        UNKNOWN_HOST_MESSAGE in str(e.get("message", "")).lower()
+        for e in errors
+        if isinstance(e, dict)
+    )
 
 
 def _tag_error(message: str) -> list[dict[str, Any]]:
@@ -157,6 +180,66 @@ class HostsModule(BaseModule):
             annotations=ToolAnnotations(
                 readOnlyHint=False,
                 destructiveHint=False,
+                idempotentHint=True,
+                openWorldHint=True,
+            ),
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.get_host_online_state,
+            name="get_host_online_state",
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.get_host_network_history,
+            name="get_host_network_history",
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.get_host_login_history,
+            name="get_host_login_history",
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.search_hidden_hosts,
+            name="search_hidden_hosts",
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.hide_hosts,
+            name="hide_hosts",
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=True,
+                idempotentHint=True,
+                openWorldHint=True,
+            ),
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.unhide_hosts,
+            name="unhide_hosts",
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=True,
+                openWorldHint=True,
+            ),
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.delete_hosts,
+            name="delete_hosts",
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=True,
                 idempotentHint=True,
                 openWorldHint=True,
             ),
@@ -410,7 +493,7 @@ class HostsModule(BaseModule):
         verify the state afterwards with `falcon_search_hosts` filtering on `status`
         (`containment_pending`, then `contained`).
         """
-        return self._perform_containment_action("contain", ids)
+        return self._perform_host_action("contain", ids)
 
     def lift_host_containment(
         self,
@@ -433,31 +516,386 @@ class HostsModule(BaseModule):
         asynchronously, so verify the state afterwards with `falcon_search_hosts`
         filtering on `status` (`lift_containment_pending`, then `normal`).
         """
-        return self._perform_containment_action("lift_containment", ids)
+        return self._perform_host_action("lift_containment", ids)
 
-    def _perform_containment_action(
-        self, action_name: str, ids: list[str] | None
+    def get_host_online_state(
+        self,
+        ids: list[str] = Field(
+            description=(
+                "Host device IDs (AIDs, 32 hex characters). Get them from "
+                "falcon_search_hosts. Duplicates are ignored. Maximum: "
+                f"{MAX_ONLINE_STATE_IDS} hosts per call."
+            ),
+        ),
     ) -> dict[str, Any]:
-        """Run a containment action and report per-host results.
+        """Check whether hosts are online right now: `state` is online, offline or unknown.
 
-        PerformActionV2 can answer with `resources` for some IDs and `errors` for
-        others, and may do so under a non-2xx status. handle_api_response would drop
-        the resources on a non-2xx and hide hosts whose state did change, so the
-        response is read here instead.
+        Use this before starting an RTR session, containing a host or running a script,
+        to know whether the sensor will act now or queue the request. Returns
+        `results` (one record per host with `id`, `state` and `last_seen`) and
+        `not_found` (IDs that match no host).
+        """
+        device_ids, problem = _validate_device_ids(ids, MAX_ONLINE_STATE_IDS)
+        if problem:
+            return _format_error_response(problem, operation="GetOnlineState_V1")
+
+        def call(batch: list[str]) -> dict[str, Any]:
+            return self.client.command("GetOnlineState_V1", parameters={"ids": batch})
+
+        return self._per_host_read(
+            call,
+            device_ids,
+            operation="GetOnlineState_V1",
+            error_message="Failed to get host online state",
+        )
+
+    def get_host_network_history(
+        self,
+        ids: list[str] = Field(
+            description=(
+                "Host device IDs (AIDs, 32 hex characters). Get them from "
+                "falcon_search_hosts. Duplicates are ignored. Maximum: "
+                f"{MAX_HISTORY_IDS} hosts per call."
+            ),
+        ),
+    ) -> dict[str, Any]:
+        """Get the history of IP and MAC addresses each host has used.
+
+        Use this to tie an IP address seen at a point in time back to the host that held
+        it, or to see where a host has been on the network. Returns `results` (one
+        record per host with `device_id` and `history`, a list of `ip_address`,
+        `mac_address` and `timestamp`) and `not_found` (IDs that match no host).
+        To find hosts by their current IP, use falcon_search_hosts with `local_ip` or
+        `external_ip`.
+        """
+        device_ids, problem = _validate_device_ids(ids, MAX_HISTORY_IDS)
+        if problem:
+            return _format_error_response(
+                problem, operation="QueryGetNetworkAddressHistoryV1"
+            )
+
+        def call(batch: list[str]) -> dict[str, Any]:
+            return self.client.command(
+                "QueryGetNetworkAddressHistoryV1", body={"ids": batch}
+            )
+
+        return self._per_host_read(
+            call,
+            device_ids,
+            operation="QueryGetNetworkAddressHistoryV1",
+            error_message="Failed to get host network address history",
+        )
+
+    def get_host_login_history(
+        self,
+        ids: list[str] = Field(
+            description=(
+                "Host device IDs (AIDs, 32 hex characters). Get them from "
+                "falcon_search_hosts. Duplicates are ignored. Maximum: "
+                f"{MAX_HISTORY_IDS} hosts per call, or {MAX_INTERACTIVE_LOGIN_IDS} "
+                "when `interactive_only` is true."
+            ),
+        ),
+        interactive_only: bool = Field(
+            default=False,
+            description=(
+                "False (default): each host's most recent logins of any kind, up to 10 "
+                "per host. True: interactive logins only, from the Host Timeline, "
+                "within the `since`/`until` window and up to `limit` per host."
+            ),
+        ),
+        since: str = Field(
+            default="now-7d",
+            description=(
+                "Start of the window, inclusive. Relative ('now-30d') or an ISO 8601 "
+                "timestamp. Used only when `interactive_only` is true."
+            ),
+        ),
+        until: str = Field(
+            default="now",
+            description=(
+                "End of the window, inclusive. Used only when `interactive_only` is true."
+            ),
+        ),
+        limit: int = Field(
+            default=10,
+            ge=1,
+            le=100,
+            description=(
+                "Maximum logins per host [1-100]. Used only when `interactive_only` "
+                "is true."
+            ),
+        ),
+    ) -> dict[str, Any]:
+        """Get the users who recently logged in to each host, with login times.
+
+        Use this to see who was on a host around an incident, or which accounts touch a
+        machine. Returns `results` (one record per host with `device_id` and
+        `recent_logins`, a list of `user_name` and `login_time`) and `not_found` (IDs
+        that match no host). To go the other way, from a user to the hosts they used,
+        use falcon_get_user_endpoint_history.
+        """
+        max_ids = MAX_INTERACTIVE_LOGIN_IDS if interactive_only else MAX_HISTORY_IDS
+        operation = (
+            "QueryDeviceLoginHistoryV2" if interactive_only else "QueryDeviceLoginHistory"
+        )
+        device_ids, problem = _validate_device_ids(ids, max_ids)
+        if problem:
+            return _format_error_response(problem, operation=operation)
+
+        def call(batch: list[str]) -> dict[str, Any]:
+            if interactive_only:
+                return self.client.command(
+                    "QueryDeviceLoginHistoryV2",
+                    parameters={"from": since, "to": until, "limit": limit},
+                    body={"ids": batch},
+                )
+            return self.client.command("QueryDeviceLoginHistory", body={"ids": batch})
+
+        return self._per_host_read(
+            call,
+            device_ids,
+            operation=operation,
+            error_message="Failed to get host login history",
+        )
+
+    def search_hidden_hosts(
+        self,
+        filter: str | None = Field(
+            default=None,
+            description=(
+                "FQL filter expression, with the same fields as falcon_search_hosts. "
+                "See `falcon://hosts/search/fql-guide` for syntax."
+            ),
+            examples=["platform_name:'Windows'", "hostname:'PC*'"],
+        ),
+        limit: int = Field(
+            default=10,
+            ge=1,
+            le=5000,
+            description="The maximum records to return. [1-5000]",
+        ),
+        offset: int | None = Field(
+            default=None,
+            description="The offset to start retrieving records from.",
+        ),
+        sort: str | None = Field(
+            default=None,
+            description=(
+                "Sort field and direction with the dot separator, as in "
+                "falcon_search_hosts. Examples: 'hostname.asc', 'last_seen.desc'"
+            ),
+            examples=["hostname.asc", "last_seen.desc"],
+        ),
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Search hidden hosts: hosts removed from the console, which falcon_search_hosts does not return.
+
+        Hidden hosts drop out of Falcon's reporting, so check them when scoping an
+        incident or when a known machine is missing from host searches. Returns full
+        host details (`host_hidden_status` is `hidden`). Restore a host with
+        falcon_unhide_hosts.
+        Responses include `pagination.total` (the total number of records matching the filter, or null when the API does not report a count).
+        """
+        device_ids, pagination = self._base_search_with_meta(
+            operation="QueryHiddenDevices",
+            search_params={
+                "filter": filter,
+                "limit": limit,
+                "offset": offset,
+                "sort": sort,
+            },
+            error_message="Failed to search hidden hosts",
+        )
+
+        if self._is_error(device_ids):
+            return self._format_fql_error_response(
+                [device_ids], filter, SEARCH_HOSTS_FQL_DOCUMENTATION
+            )
+
+        if not device_ids:
+            return self._build_pagination_envelope([], pagination, filter)
+
+        details = self._base_get_by_ids(
+            operation="PostDeviceDetailsV2",
+            ids=device_ids,
+            id_key="ids",
+        )
+
+        if self._is_error(details):
+            return [details]
+
+        details = self._reorder_by_ids(device_ids, details, id_field="device_id")
+        return self._build_pagination_envelope(details, pagination, filter)
+
+    def hide_hosts(
+        self,
+        ids: list[str] = Field(
+            description=(
+                "Host device IDs (AIDs, 32 hex characters) to hide. Get them from "
+                "falcon_search_hosts. While a host is hidden, no new detections for it "
+                "are reported in the console or the APIs. Duplicates are ignored. "
+                f"Maximum: {MAX_CONTAINMENT_DEVICE_IDS} hosts per call."
+            ),
+        ),
+    ) -> dict[str, Any]:
+        """Hide hosts: take them out of the console and out of Falcon's reporting.
+
+        Use this for decommissioned or duplicate hosts. A hidden host goes silent:
+        Falcon reports nothing new for it, so never hide a host that is part of an
+        active investigation. Reverse it with falcon_unhide_hosts;
+        find hidden hosts with falcon_search_hidden_hosts. Hiding an already hidden host
+        is a no-op. Returns per-host results as `succeeded_ids` and `resources`; on a
+        partial failure, `partial_failure` is true and `failed_ids` and `errors` say
+        which hosts were not hidden and why.
+        """
+        return self._perform_host_action("hide_host", ids)
+
+    def unhide_hosts(
+        self,
+        ids: list[str] = Field(
+            description=(
+                "Host device IDs (AIDs, 32 hex characters) to restore. Find them with "
+                "falcon_search_hidden_hosts. Duplicates are ignored. Maximum: "
+                f"{MAX_CONTAINMENT_DEVICE_IDS} hosts per call."
+            ),
+        ),
+    ) -> dict[str, Any]:
+        """Unhide hosts: restore hidden hosts to the console and to Falcon's reporting.
+
+        Unhiding a host that is not hidden is a no-op. Returns per-host results as
+        `succeeded_ids` and `resources`; on a partial failure, `partial_failure` is true
+        and `failed_ids` and `errors` say which hosts were not restored and why.
+        """
+        return self._perform_host_action("unhide_host", ids)
+
+    def delete_hosts(
+        self,
+        ids: list[str] = Field(
+            description=(
+                "Host device IDs (AIDs, 32 hex characters) to delete permanently. "
+                "Duplicates are ignored. Maximum: "
+                f"{MAX_CONTAINMENT_DEVICE_IDS} hosts per call."
+            ),
+        ),
+    ) -> dict[str, Any]:
+        """Permanently delete hosts from Falcon. This cannot be undone.
+
+        Use this only for hosts that are gone for good, such as retired machines. To
+        take a host out of view reversibly, use falcon_hide_hosts instead. Returns
+        per-host results as `succeeded_ids` and `resources`; when the API confirms only
+        some hosts, `partial_failure` is true and `failed_ids` and `errors` say which.
+        Verify afterwards with falcon_search_hosts and falcon_search_hidden_hosts before
+        retrying.
         """
         device_ids, problem = _validate_device_ids(ids)
         if problem:
-            return _format_error_response(problem, operation=CONTAINMENT_OPERATION)
+            return _format_error_response(problem, operation="DevicesActionsDeleteV1")
+
+        logger.debug("Permanently deleting %d host(s)", len(device_ids))
+
+        # IDs only: the endpoint also takes a `filter`, which this tool never sends
+        response = self.client.command("DevicesActionsDeleteV1", body={"ids": device_ids})
+        return self._summarize_host_action(
+            "delete", "DevicesActionsDeleteV1", device_ids, response
+        )
+
+    def _per_host_read(
+        self,
+        call: Callable[[list[str]], dict[str, Any]],
+        device_ids: list[str],
+        operation: str,
+        error_message: str,
+    ) -> dict[str, Any]:
+        """Run a per-host read, setting aside IDs that match no host.
+
+        These endpoints fail the whole call when any one ID is unknown (a deleted host,
+        a typo). On that failure the IDs are checked against host details, the call is
+        retried with the hosts that exist, and the rest are returned as `not_found`.
+        """
+        response = call(device_ids)
+        not_found: list[str] = []
+
+        if _rejects_unknown_host(response):
+            known = self._existing_host_ids(device_ids)
+            if known is not None:
+                not_found = [i for i in device_ids if i not in known]
+                remaining = [i for i in device_ids if i in known]
+                if not remaining:
+                    return {"results": [], "not_found": not_found}
+                response = call(remaining)
+
+        status_code = response.get("status_code")
+        body = response.get("body") or {}
+        resources = body.get("resources")
+        if status_code is None or status_code >= 300:
+            error: dict[str, Any] = handle_api_response(
+                response, operation=operation, error_message=error_message
+            )
+            return error
+        if body.get("errors") and not resources:
+            # GetOnlineState_V1 reports failures under HTTP 200
+            api_messages = [
+                e.get("message") for e in body["errors"] if isinstance(e, dict) and e.get("message")
+            ]
+            return _format_error_response(
+                f"{error_message}: {'; '.join(api_messages)}",
+                details=error_details(response),
+                operation=operation,
+            )
+
+        return {"results": resources or [], "not_found": not_found}
+
+    def _existing_host_ids(self, device_ids: list[str]) -> set[str] | None:
+        """Return which IDs belong to a host, or None when that can't be told.
+
+        PostDeviceDetailsV2 returns the hosts it found even when it rejects the call
+        for an unknown ID, and it finds hidden hosts too.
+        """
+        response = self.client.command("PostDeviceDetailsV2", body={"ids": device_ids})
+        body = response.get("body") or {}
+        found = {
+            str(r.get("device_id", "")).lower()
+            for r in body.get("resources") or []
+            if isinstance(r, dict)
+        }
+        if not found and not _rejects_unknown_host(response):
+            return None
+        return found
+
+    def _perform_host_action(
+        self, action_name: str, ids: list[str] | None
+    ) -> dict[str, Any]:
+        """Run a PerformActionV2 action (contain, lift, hide, unhide) on hosts."""
+        device_ids, problem = _validate_device_ids(ids)
+        if problem:
+            return _format_error_response(problem, operation=HOST_ACTION_OPERATION)
 
         logger.debug("Performing %s on %d host(s)", action_name, len(device_ids))
 
         # action_name is `in: query`; the IDs travel in the body
         response = self.client.command(
-            CONTAINMENT_OPERATION,
+            HOST_ACTION_OPERATION,
             parameters={"action_name": action_name},
             body={"ids": device_ids},
         )
+        return self._summarize_host_action(
+            action_name, HOST_ACTION_OPERATION, device_ids, response
+        )
 
+    @staticmethod
+    def _summarize_host_action(
+        action_name: str,
+        operation: str,
+        device_ids: list[str],
+        response: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Report per-host results of a host action.
+
+        The action endpoints can answer with `resources` for some IDs and `errors` for
+        others, and may do so under a non-2xx status. handle_api_response would drop
+        the resources on a non-2xx and hide hosts whose state did change, so the
+        response is read here instead.
+        """
         status_code = response.get("status_code")
         body = response.get("body") or {}
         resources = [r for r in body.get("resources") or [] if isinstance(r, dict)]
@@ -469,7 +907,7 @@ class HostsModule(BaseModule):
             if status_code is None or status_code >= 300:
                 error: dict[str, Any] = handle_api_response(
                     response,
-                    operation=CONTAINMENT_OPERATION,
+                    operation=operation,
                     error_message=error_message,
                 )
                 return error
@@ -479,7 +917,7 @@ class HostsModule(BaseModule):
                 return _format_error_response(
                     f"{error_message}:{detail}",
                     details=error_details(response),
-                    operation=CONTAINMENT_OPERATION,
+                    operation=operation,
                 )
 
         confirmed = {str(r.get("id", "")).lower() for r in resources}

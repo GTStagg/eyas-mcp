@@ -359,6 +359,29 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
     "falcon_get_host_details": [
         "Get the full details for host device abc123",
     ],
+    "falcon_get_host_online_state": [
+        "Is host 0123456789abcdef0123456789abcdef online right now?",
+    ],
+    "falcon_get_host_network_history": [
+        "Which IP addresses has host 0123456789abcdef0123456789abcdef used?",
+    ],
+    "falcon_get_host_login_history": [
+        "Who logged in to host 0123456789abcdef0123456789abcdef recently?",
+        "Show interactive logins on this host over the last 30 days",
+    ],
+    "falcon_search_hidden_hosts": [
+        "List hidden Windows hosts",
+        "Is host WS-0142 hidden?",
+    ],
+    "falcon_hide_hosts": [
+        "Hide the duplicate host record 0123456789abcdef0123456789abcdef",
+    ],
+    "falcon_unhide_hosts": [
+        "Unhide host 0123456789abcdef0123456789abcdef",
+    ],
+    "falcon_delete_hosts": [
+        "Permanently delete retired host 0123456789abcdef0123456789abcdef",
+    ],
     # Host Groups
     "falcon_search_host_groups": [
         "Show me all static host groups",
