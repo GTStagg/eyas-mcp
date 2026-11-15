@@ -64,6 +64,9 @@ MODULE_METADATA: dict[str, dict[str, Any]] = {
     "idp": {
         "title": "Identity Protection",
     },
+    "sandbox": {
+        "title": "Falcon Sandbox",
+    },
     "scheduledreports": {
         "slug": "scheduled-reports",
     },
@@ -365,6 +368,31 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
     ],
     "falcon_get_host_details": [
         "Get the full details for host device abc123",
+    ],
+    "falcon_search_sandbox_reports": [
+        "Has this SHA256 been detonated in the sandbox before?",
+        "Show malicious sandbox results from the last week",
+    ],
+    "falcon_get_sandbox_report": [
+        "What did the sample in this sandbox report do on the network?",
+    ],
+    "falcon_search_sandbox_submissions": [
+        "Is my sandbox submission finished yet?",
+    ],
+    "falcon_check_sandbox_samples": [
+        "Is this file already uploaded to the sandbox?",
+    ],
+    "falcon_submit_to_sandbox": [
+        "Detonate this URL in the Windows 10 sandbox with simulated network",
+    ],
+    "falcon_upload_sandbox_sample": [
+        "Upload this file to the sandbox",
+    ],
+    "falcon_delete_sandbox_report": [
+        "Delete this sandbox report",
+    ],
+    "falcon_delete_sandbox_sample": [
+        "Remove this uploaded sample from the sandbox",
     ],
     "falcon_search_users": [
         "List users who have not logged in for 90 days",

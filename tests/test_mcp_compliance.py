@@ -46,6 +46,11 @@ MUTATING_TOOL_ALLOWLIST: set[str] = {
     "falcon_hide_hosts",
     "falcon_unhide_hosts",
     "falcon_delete_hosts",
+    # sandbox module
+    "falcon_submit_to_sandbox",
+    "falcon_upload_sandbox_sample",
+    "falcon_delete_sandbox_report",
+    "falcon_delete_sandbox_sample",
     # users module
     "falcon_manage_user_roles",
     "falcon_reset_user_credentials",

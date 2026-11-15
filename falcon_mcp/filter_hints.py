@@ -61,6 +61,17 @@ FILTER_HINTS: dict[str, str] = {
         "Use status:'contained' to find hosts in network containment. "
         "Ex: platform_name:'Windows'+status:'contained'"
     ),
+    "falcon_search_sandbox_reports": (
+        "Sample fields need the sandbox. prefix (sha256 alone matches nothing): "
+        "sandbox.sha256, sandbox.verdict, sandbox.threat_score, sandbox.submit_name, "
+        "sandbox.environment_id; also verdict (malicious|suspicious|no specific threat|"
+        "whitelisted), id, created_timestamp. "
+        "Ex: verdict:'malicious'+created_timestamp:>'now-7d'"
+    ),
+    "falcon_search_sandbox_submissions": (
+        "Fields: state (created|running|success|error), sandbox.sha256, id, "
+        "created_timestamp. Ex: state:'running'"
+    ),
     "falcon_search_users": (
         "Fields: uid (login email), first_name, last_name, name, status, "
         "has_temporary_roles, assigned_cids, cid. "

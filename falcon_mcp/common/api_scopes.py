@@ -20,6 +20,17 @@ API_SCOPE_REQUIREMENTS = {
     "CreateQueryJob": ["Audit:read"],
     "PollQueryJobStatus": ["Audit:read"],
     "GetQueryResults": ["Audit:read"],
+    # Falcon Sandbox
+    "QueryReports": ["Sandbox (Falcon Intelligence):read"],
+    "GetSummaryReports": ["Sandbox (Falcon Intelligence):read"],
+    "GetReports": ["Sandbox (Falcon Intelligence):read"],
+    "QuerySubmissions": ["Sandbox (Falcon Intelligence):read"],
+    "GetSubmissions": ["Sandbox (Falcon Intelligence):read"],
+    "QuerySampleV1": ["Sandbox (Falcon Intelligence):read"],
+    "Submit": ["Sandbox (Falcon Intelligence):write"],
+    "UploadSampleV2": ["Sandbox (Falcon Intelligence):write"],
+    "DeleteReport": ["Sandbox (Falcon Intelligence):write"],
+    "DeleteSampleV2": ["Sandbox (Falcon Intelligence):write"],
     # Users and roles
     "queryUserV2": ["User Management:read"],
     "retrieveUsersGETV2": ["User Management:read"],
