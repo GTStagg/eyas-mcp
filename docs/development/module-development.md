@@ -414,6 +414,8 @@ The `_add_tool()` helper applies `READ_ONLY_ANNOTATIONS` by default. **Override 
 2. **Parameter Descriptions**: Use concise Field descriptions. For FQL filters: `"FQL filter expression. See \`falcon://path/fql-guide\` for syntax."`
 3. **Examples**: Include examples in Field `examples` parameter where helpful
 4. **Filter Hints (Dynamic Mode)**: If a tool has a `filter` parameter referencing an FQL guide, add an entry to `falcon_mcp/filter_hints.py`. This provides LLMs with the top 5-10 most commonly queried fields inline at tool discovery time, preventing invalid filter construction. Read the FQL filter tuples in `falcon_mcp/resources/` and select fields with enumerable values (severity, status, platform) and fields users commonly search by (hostname, name, timestamps). A CI test enforces coverage in both directions — builds fail if a hint is missing for a tool that needs one, and also if a hint key has no matching tool (e.g. after a rename or removal).
+5. **Guide Resources**: A module with any FQL filter tool must register at least one guide resource, at a URI of the form `falcon://{module}/{path}/{kind}-guide`. A compliance test checks both.
+6. **Operation Names in Text**: When a description names a FalconPy operation, such as `CreateAPIClient`, put it in backticks rather than quotes. The tool safety test reads quoted words as operations the tool calls.
 
 ### Type Hints
 

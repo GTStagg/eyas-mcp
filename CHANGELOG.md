@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.22.0 (2026-11-14)
+
+Security hardening, then new tools for host context, the containment allowlist, the audit log, users and roles, Falcon Sandbox, collecting files from hosts into cases, on-demand scans, CVE and malware intelligence, and installed patches. Requires FalconPy 1.6.7.
 
 ### Features
 
