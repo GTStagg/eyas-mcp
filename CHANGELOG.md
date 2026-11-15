@@ -26,6 +26,7 @@
 
 ### Bug Fixes
 
+* **deps:** require FalconPy 1.6.7, which adds the user permission, case evidence, scheduled report and patch deployment operations
 * **idp:** `falcon_idp_investigate_entity` refuses more than 100 `entity_ids` and unknown `investigation_types`, and runs each investigation type once. Timeline and relationship analysis make one call per entity, so one request could fan out into thousands
 * **ioc:** `falcon_remove_iocs` refuses `ids` and `filter` together. The API deletes by the filter when both are sent, which can reach far more IOCs than the IDs named
 * **rtr:** read-only RTR command strings refuse `;`, `&`, `|`, `<`, `>` and backticks, so a call runs one command. `&` and `;` are legal in Windows file names, so a path such as `C:\R&D` can no longer be read through these tools

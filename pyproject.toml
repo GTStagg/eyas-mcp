@@ -23,7 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "anyio>=4.5",
-    "crowdstrike-falconpy>=1.6.4",
+    "crowdstrike-falconpy>=1.6.7",
     "mcp>=1.28.1,<2.0.0",
     "python-dotenv>=1.1.1",
 ]
