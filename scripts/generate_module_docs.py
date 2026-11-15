@@ -470,6 +470,18 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
     "falcon_get_audit_log_results": [
         "Get the next page of that audit log query",
     ],
+    "falcon_search_containment_allowlist": [
+        "What can a contained host still reach?",
+    ],
+    "falcon_create_containment_allowlist_rules": [
+        "Let contained hosts reach our remediation subnet 10.20.0.0/16",
+    ],
+    "falcon_update_containment_allowlist_labels": [
+        "Rename the containment allowlist rule for 10.20.0.0/16",
+    ],
+    "falcon_delete_containment_allowlist_rules": [
+        "Remove the old patch server from the containment allowlist",
+    ],
     "falcon_get_host_online_state": [
         "Is host 0123456789abcdef0123456789abcdef online right now?",
     ],

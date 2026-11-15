@@ -33,6 +33,10 @@ class TestHostsModule(TestModules):
             "falcon_hide_hosts",
             "falcon_unhide_hosts",
             "falcon_delete_hosts",
+            "falcon_search_containment_allowlist",
+            "falcon_create_containment_allowlist_rules",
+            "falcon_update_containment_allowlist_labels",
+            "falcon_delete_containment_allowlist_rules",
         ]
         self.assert_tools_registered(expected_tools)
 

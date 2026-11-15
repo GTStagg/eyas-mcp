@@ -46,6 +46,9 @@ MUTATING_TOOL_ALLOWLIST: set[str] = {
     "falcon_hide_hosts",
     "falcon_unhide_hosts",
     "falcon_delete_hosts",
+    "falcon_create_containment_allowlist_rules",
+    "falcon_update_containment_allowlist_labels",
+    "falcon_delete_containment_allowlist_rules",
     # ods module
     "falcon_start_ods_scan",
     "falcon_cancel_ods_scans",
