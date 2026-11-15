@@ -89,6 +89,9 @@ MODULE_METADATA: dict[str, dict[str, Any]] = {
     "threatgraph": {
         "title": "Threat Graph",
     },
+    "users": {
+        "title": "Users and Roles",
+    },
 }
 
 # Per-tool scope overrides. The automatic scope extractor widens to every
@@ -362,6 +365,37 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
     ],
     "falcon_get_host_details": [
         "Get the full details for host device abc123",
+    ],
+    "falcon_search_users": [
+        "List users who have not logged in for 90 days",
+        "Find the Falcon user jdoe@example.com",
+    ],
+    "falcon_get_user_roles": [
+        "Who is a Falcon Administrator?",
+        "What roles does jdoe@example.com have?",
+    ],
+    "falcon_search_roles": [
+        "List the custom roles in this tenant",
+        "What is the role ID for Real Time Responder - Administrator?",
+    ],
+    "falcon_get_role_permissions": [
+        "Which RTR permissions does the Falcon Analyst role have?",
+    ],
+    "falcon_manage_user_roles": [
+        "Grant jdoe the Falcon Analyst - Read Only role until Friday",
+        "Revoke RTR Administrator from jdoe",
+    ],
+    "falcon_reset_user_credentials": [
+        "Reset 2FA for jdoe, they lost their phone",
+    ],
+    "falcon_create_user": [
+        "Create a Falcon user for new.analyst@example.com",
+    ],
+    "falcon_update_user": [
+        "Change jdoe's last name to Smith",
+    ],
+    "falcon_delete_user": [
+        "Delete the Falcon account of a departed employee",
     ],
     "falcon_search_audit_log": [
         "Who logged in to the Falcon console in the last 7 days?",

@@ -4,6 +4,7 @@
 
 ### Features
 
+* **users:** new Users and Roles module. Reads (`User Management:read`): `falcon_search_users`, `falcon_get_user_roles` (one user's roles, or every user holding a role), `falcon_search_roles` and `falcon_get_role_permissions`. Writes (`User Management:write`, hidden by `--read-only`): `falcon_manage_user_roles` (grant or revoke, optionally temporary), `falcon_reset_user_credentials` (2FA or password), `falcon_create_user`, `falcon_update_user` and `falcon_delete_user` (permanent)
 * **audit:** new read-only Audit Log module. `falcon_search_audit_log` searches who did what in the tenant (console logins, API client and secret changes, policy, workflow, case and detection changes, API requests) by time window, actor, category, action, target, country and user agent, and `falcon_get_audit_log_results` pages through a query job or picks up one that was still running. Needs `Audit:read`
 * **hosts:** new read-only host context tools: `falcon_get_host_online_state` (online, offline or unknown, up to 100 hosts), `falcon_get_host_network_history` (IP and MAC address history, up to 500 hosts), `falcon_get_host_login_history` (recent logins per host, or interactive logins in a time window with `interactive_only`) and `falcon_search_hidden_hosts`. IDs that match no host come back in `not_found` instead of failing the call
 * **hosts:** new write tools `falcon_hide_hosts`, `falcon_unhide_hosts` and `falcon_delete_hosts` (permanent). They need `Hosts:write` and are hidden by `--read-only`

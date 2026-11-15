@@ -60,6 +60,7 @@ See the [`docs/`](docs/overview.md) folder for configuration, usage and module r
 | [Shield](docs/modules/shield.md) | SaaS security posture, checks, alerts, app inventory, and AI agents built in connected SaaS platforms |
 | [Spotlight](docs/modules/spotlight.md) | Manage and analyze vulnerability data and security assessments |
 | [Threat Graph](docs/modules/threatgraph.md) | Look up Threat Graph vertices, find which devices ran a file hash, and pivot along graph edges |
+| [Users and Roles](docs/modules/users.md) | Search users, see who holds which roles and what a role permits, grant or revoke roles, reset 2FA or passwords, and create, rename or delete users |
 | [Zero Trust Assessment](docs/modules/zero-trust-assessment.md) | Retrieve Zero Trust Assessment posture scores and sensor and OS hardening signals for hosts |
 
 See the [Module Overview](docs/modules/overview.md) for required API scopes, available tools, and FQL resources.

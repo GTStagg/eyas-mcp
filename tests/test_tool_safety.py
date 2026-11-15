@@ -54,6 +54,10 @@ READS_USING_WRITE_VERBS = frozenset(
         "StartSearchV1",
         "StopSearchV1",
         "aggregates_access_tags_post_v1",
+        # User management lookups that take IDs in a POST body
+        "entitiesPermissionsGETV1",
+        "entitiesRolesGETV2",
+        "retrieveUsersGETV2",
         "aggregates_file_details_post_v1",
         "aggregates_notification_groups_post_v2",
         "aggregates_slas_post_v1",

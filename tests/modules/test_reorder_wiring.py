@@ -60,6 +60,7 @@ from falcon_mcp.modules.quarantine import QuarantineModule
 from falcon_mcp.modules.recon import ReconModule
 from falcon_mcp.modules.rtr import RTRModule
 from falcon_mcp.modules.scheduled_reports import ScheduledReportsModule
+from falcon_mcp.modules.users import UsersModule
 from falcon_mcp.modules.zero_trust_assessment import ZeroTrustAssessmentModule
 
 # Derived from the installed package rather than the process CWD, so the guards scan the
@@ -141,6 +142,13 @@ CASES: list[ReorderCase] = [
         method="search_hidden_hosts",
         id_field="device_id",
         site=("falcon_mcp/modules/hosts.py", "search_hidden_hosts"),
+    ),
+    ReorderCase(
+        tool="falcon_search_users",
+        module_cls=UsersModule,
+        method="search_users",
+        id_field="uuid",
+        site=("falcon_mcp/modules/users.py", "search_users"),
     ),
     ReorderCase(
         tool="falcon_search_detections",
