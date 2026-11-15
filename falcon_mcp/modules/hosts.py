@@ -4,10 +4,11 @@ Hosts module for Falcon MCP Server
 This module provides tools for accessing and managing CrowdStrike Falcon hosts/devices.
 """
 
+import ipaddress
 import re
 from collections.abc import Callable
 from textwrap import dedent
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server import FastMCP
 from mcp.server.fastmcp.resources import TextResource
@@ -59,6 +60,17 @@ MAX_INTERACTIVE_LOGIN_IDS = 10
 # message (GetOnlineState_V1 under HTTP 200, the history endpoints under 400).
 UNKNOWN_HOST_MESSAGE = "invalid device id"
 
+# Network containment allowlist: what contained hosts may still reach. Rule types as
+# CrowdStrike documents them; every rule lives in the `containment` context.
+ALLOWLIST_CONTEXT = "containment"
+ALLOWLIST_TYPES = ("ip_range", "ip_dns", "fqdn")
+MAX_ALLOWLIST_CHANGES = 50
+MAX_ALLOWLIST_LABEL = 255
+CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+_FQDN = re.compile(
+    r"(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+"
+)
+
 
 def _validate_device_ids(
     ids: list[str] | None, max_ids: int = MAX_CONTAINMENT_DEVICE_IDS
@@ -98,6 +110,38 @@ def _validate_device_ids(
         )
 
     return normalized, None
+
+
+def _bad_label(label: Any) -> bool:
+    """True when an allowlist label is missing, too long or holds control characters."""
+    return (
+        not isinstance(label, str)
+        or not label.strip()
+        or len(label) > MAX_ALLOWLIST_LABEL
+        or bool(CONTROL_CHARS.search(label))
+    )
+
+
+def _allowlist_rule_problem(rule_type: Any, value: Any, allow_subdomains: Any) -> str | None:
+    """Check one allowlist rule's type and value; None when it is valid."""
+    if rule_type not in ALLOWLIST_TYPES:
+        return f"type must be one of {list(ALLOWLIST_TYPES)}, not {rule_type!r}."
+    text = value.strip() if isinstance(value, str) else ""
+    if rule_type == "ip_range":
+        try:
+            ipaddress.ip_network(text, strict=False)
+        except ValueError:
+            return f"{value!r} is not an IP address or CIDR block."
+    elif rule_type == "ip_dns":
+        try:
+            ipaddress.ip_address(text)
+        except ValueError:
+            return f"{value!r} is not an IP address; a DNS rule names one DNS server."
+    elif not _FQDN.fullmatch(text):
+        return f"{value!r} is not a domain name such as updates.example.com."
+    if allow_subdomains and rule_type != "fqdn":
+        return "allow_subdomains applies only to fqdn rules."
+    return None
 
 
 def _rejects_unknown_host(response: dict[str, Any]) -> bool:
@@ -189,6 +233,48 @@ class HostsModule(BaseModule):
             server=server,
             method=self.get_host_online_state,
             name="get_host_online_state",
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.search_containment_allowlist,
+            name="search_containment_allowlist",
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.create_containment_allowlist_rules,
+            name="create_containment_allowlist_rules",
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=True,
+                openWorldHint=True,
+            ),
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.update_containment_allowlist_labels,
+            name="update_containment_allowlist_labels",
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=True,
+                openWorldHint=True,
+            ),
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.delete_containment_allowlist_rules,
+            name="delete_containment_allowlist_rules",
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=True,
+                idempotentHint=True,
+                openWorldHint=True,
+            ),
         )
 
         self._add_tool(
@@ -798,6 +884,262 @@ class HostsModule(BaseModule):
         return self._summarize_host_action(
             "delete", "DevicesActionsDeleteV1", device_ids, response
         )
+
+    # ------------------------------------------------------------------ #
+    # Network containment allowlist
+    # ------------------------------------------------------------------ #
+
+    def search_containment_allowlist(
+        self,
+        rule_type: Literal["ip_range", "ip_dns", "fqdn"] | None = Field(
+            default=None,
+            description=(
+                "Only rules of this type: ip_range (IP or CIDR), ip_dns (DNS servers) or "
+                "fqdn (domains). Omit for all."
+            ),
+        ),
+    ) -> dict[str, Any]:
+        """List the network containment allowlist: what contained hosts can still reach.
+
+        A contained host loses network access except to the Falcon cloud and these
+        rules: IP addresses and ranges (ip_range), DNS servers (ip_dns) and domains
+        (fqdn). Check them before containing a host, for example to keep a remediation
+        server or patch source reachable. Returns `results`, each with `id`, `type`,
+        `rule`, `label`, `options` (`allow_subdomain` for fqdn rules), `created_by` and
+        `created_on`, and `counts` by type.
+        """
+        rules = self._allowlist_rules()
+        if isinstance(rules, dict):
+            return rules
+        shown = [r for r in rules if rule_type is None or r.get("type") == rule_type]
+        counts: dict[str, int] = {t: 0 for t in ALLOWLIST_TYPES}
+        for rule in rules:
+            counts[str(rule.get("type"))] = counts.get(str(rule.get("type")), 0) + 1
+        return {"results": shown, "counts": counts}
+
+    def create_containment_allowlist_rules(
+        self,
+        rules: list[dict[str, Any]] = Field(
+            description=(
+                f"Rules to add, at most {MAX_ALLOWLIST_CHANGES}. Each has `type` (ip_range, "
+                "ip_dns or fqdn), `rule` (an IP address or CIDR block, a DNS server's IP, "
+                "or a domain), `label` (a name shown in the console) and, for fqdn only, "
+                "optional `allow_subdomains` (also allow one level of subdomains)."
+            ),
+            examples=[[{"type": "ip_range", "rule": "10.20.0.0/16", "label": "Remediation subnet"}]],
+        ),
+    ) -> dict[str, Any] | list[Any]:
+        """Add rules to the network containment allowlist so contained hosts can still reach them.
+
+        Every contained host in the tenant can reach what this allowlist names, so add
+        only what remediation needs. A domain (fqdn) rule needs at least one DNS server
+        (ip_dns) rule, existing or in the same call. Rules that already exist with the
+        same type and value are skipped and listed in `already_present`. Returns the
+        API's response for the rules added.
+        """
+        operation = "CreateContainmentAllowlistRules"
+        if not rules or not isinstance(rules, list):
+            return _format_error_response("Give at least one rule.", operation=operation)
+        if len(rules) > MAX_ALLOWLIST_CHANGES:
+            return _format_error_response(
+                f"At most {MAX_ALLOWLIST_CHANGES} rules per call.", operation=operation
+            )
+
+        wanted: list[dict[str, Any]] = []
+        for index, item in enumerate(rules):
+            if not isinstance(item, dict):
+                return _format_error_response(f"Rule {index} is not an object.", operation=operation)
+            rule_type, value = item.get("type"), item.get("rule")
+            allow_subdomains = bool(item.get("allow_subdomains"))
+            problem = _allowlist_rule_problem(rule_type, value, allow_subdomains)
+            label = item.get("label")
+            if not problem and _bad_label(label):
+                problem = f"label must be 1-{MAX_ALLOWLIST_LABEL} characters without control characters."
+            if problem:
+                return _format_error_response(f"Rule {index}: {problem}", operation=operation)
+            entry: dict[str, Any] = {
+                "context": ALLOWLIST_CONTEXT,
+                "type": rule_type,
+                "rule": value.strip(),
+                "label": label.strip(),
+            }
+            if rule_type == "fqdn":
+                entry["options"] = {"allow_subdomain": allow_subdomains}
+            wanted.append(entry)
+
+        existing = self._allowlist_rules()
+        if isinstance(existing, dict):
+            return existing
+        present = {(r.get("type"), str(r.get("rule", "")).lower()) for r in existing}
+        new = [w for w in wanted if (w["type"], w["rule"].lower()) not in present]
+        already = [w for w in wanted if (w["type"], w["rule"].lower()) in present]
+
+        has_dns = any(r.get("type") == "ip_dns" for r in existing) or any(
+            w["type"] == "ip_dns" for w in new
+        )
+        if any(w["type"] == "fqdn" for w in new) and not has_dns:
+            return _format_error_response(
+                "A domain (fqdn) rule needs a DNS server (ip_dns) rule so contained hosts "
+                "can resolve it. Add an ip_dns rule first, or in the same call.",
+                operation=operation,
+            )
+        if not new:
+            return {"added": [], "already_present": already}
+
+        # DNS servers first, so a domain rule in the same call finds one
+        new.sort(key=lambda w: 0 if w["type"] == "ip_dns" else 1)
+        logger.debug("Adding %d containment allowlist rule(s)", len(new))
+        response = self.client.command(operation, body={"rules": new})
+        added = handle_api_response(
+            response, operation=operation, error_message="Failed to add allowlist rules"
+        )
+        if isinstance(added, dict):
+            return added
+        return {"added": added, "already_present": already}
+
+    def update_containment_allowlist_labels(
+        self,
+        updates: list[dict[str, Any]] = Field(
+            description=(
+                f"At most {MAX_ALLOWLIST_CHANGES} entries of `id` (from "
+                "falcon_search_containment_allowlist) and the new `label`."
+            ),
+        ),
+    ) -> dict[str, Any] | list[Any]:
+        """Rename network containment allowlist rules.
+
+        Only the label changes. To change a rule's type, value or subdomain option,
+        delete it and add a new one.
+        """
+        operation = "UpdateContainmentAllowlistRules"
+        if not updates or not isinstance(updates, list) or len(updates) > MAX_ALLOWLIST_CHANGES:
+            return _format_error_response(
+                f"Give between 1 and {MAX_ALLOWLIST_CHANGES} updates.", operation=operation
+            )
+        existing = self._allowlist_rules()
+        if isinstance(existing, dict):
+            return existing
+        by_id = {str(r.get("id")): r for r in existing}
+
+        changed: list[dict[str, Any]] = []
+        for index, item in enumerate(updates):
+            rule_id = item.get("id") if isinstance(item, dict) else None
+            label = item.get("label") if isinstance(item, dict) else None
+            if rule_id not in by_id:
+                return _format_error_response(
+                    f"Update {index}: no allowlist rule with id {rule_id!r}.", operation=operation
+                )
+            if _bad_label(label):
+                return _format_error_response(
+                    f"Update {index}: label must be 1-{MAX_ALLOWLIST_LABEL} characters "
+                    "without control characters.",
+                    operation=operation,
+                )
+            current = by_id[rule_id]
+            entry = {
+                key: current[key]
+                for key in ("id", "context", "type", "rule", "options")
+                if current.get(key) is not None
+            }
+            entry["label"] = label.strip()
+            changed.append(entry)
+
+        response = self.client.command(operation, body={"rules": changed})
+        result: dict[str, Any] | list[Any] = handle_api_response(
+            response, operation=operation, error_message="Failed to rename allowlist rules"
+        )
+        return result
+
+    def delete_containment_allowlist_rules(
+        self,
+        ids: list[str] = Field(
+            description=(
+                f"Rule IDs from falcon_search_containment_allowlist, at most "
+                f"{MAX_ALLOWLIST_CHANGES}."
+            ),
+        ),
+    ) -> dict[str, Any]:
+        """Remove rules from the network containment allowlist.
+
+        Contained hosts immediately lose access to what the rules allowed, which can cut
+        a remediation tool or patch source off from them. The last DNS server (ip_dns)
+        rule can't be removed while any domain (fqdn) rule remains. Returns `deleted` and,
+        if any removal failed, `failed` with the API's reason.
+        """
+        operation = "DeleteContainmentAllowlistRules"
+        wanted = list(dict.fromkeys(i for i in ids or [] if isinstance(i, str) and i.strip()))
+        if not wanted or len(wanted) > MAX_ALLOWLIST_CHANGES:
+            return _format_error_response(
+                f"Give between 1 and {MAX_ALLOWLIST_CHANGES} rule IDs.", operation=operation
+            )
+        existing = self._allowlist_rules()
+        if isinstance(existing, dict):
+            return existing
+        by_id = {str(r.get("id")): r for r in existing}
+        unknown = [i for i in wanted if i not in by_id]
+        if unknown:
+            return _format_error_response(
+                f"No allowlist rule with id {unknown}. List rules with "
+                "falcon_search_containment_allowlist.",
+                operation=operation,
+            )
+        remaining = [r for r in existing if str(r.get("id")) not in wanted]
+        if any(r.get("type") == "fqdn" for r in remaining) and not any(
+            r.get("type") == "ip_dns" for r in remaining
+        ):
+            return _format_error_response(
+                "This would remove the last DNS server (ip_dns) rule while domain (fqdn) "
+                "rules remain, which the API refuses. Delete the fqdn rules too, or keep a "
+                "DNS rule.",
+                operation=operation,
+            )
+
+        deleted: list[str] = []
+        failed: list[dict[str, Any]] = []
+        # The endpoint takes one ID per call
+        for rule_id in wanted:
+            response = self.client.command(operation, parameters={"ids": rule_id})
+            if response.get("status_code") in (200, 202, 204):
+                deleted.append(rule_id)
+            else:
+                failed.append(
+                    {
+                        "id": rule_id,
+                        "error": handle_api_response(
+                            response, operation=operation, error_message="Failed to delete"
+                        ),
+                    }
+                )
+        result: dict[str, Any] = {"deleted": deleted}
+        if failed:
+            result["failed"] = failed
+        return result
+
+    def _allowlist_rules(self) -> list[dict[str, Any]] | dict[str, Any]:
+        """Every containment allowlist rule, or an error.
+
+        The query returns all rule IDs at once. Looking up an unknown ID makes the API
+        answer 500, so only IDs it just returned are looked up.
+        """
+        response = self.client.command(
+            "QueryContainmentAllowlistRules",
+            parameters={"filter": f"context:'{ALLOWLIST_CONTEXT}'"},
+        )
+        rule_ids = handle_api_response(
+            response,
+            operation="QueryContainmentAllowlistRules",
+            error_message="Failed to list allowlist rules",
+        )
+        if isinstance(rule_ids, dict):
+            return rule_ids
+        if not rule_ids:
+            return []
+        rules = self._base_get_by_ids(
+            operation="GetContainmentAllowlistRules", ids=rule_ids, use_params=True
+        )
+        if isinstance(rules, dict):
+            return rules
+        return sorted(rules, key=lambda r: (str(r.get("type")), str(r.get("rule"))))
 
     def _per_host_read(
         self,

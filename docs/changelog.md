@@ -7,6 +7,7 @@
 
 ### Features
 
+* **hosts:** manage the network containment allowlist, the IP ranges, DNS servers and domains contained hosts can still reach. `falcon_search_containment_allowlist` lists them (`Network Containment Allowlist:read`); `falcon_create_containment_allowlist_rules`, `falcon_update_containment_allowlist_labels` and `falcon_delete_containment_allowlist_rules` change them (`:write`, hidden by `--read-only`). Domain rules need a DNS server rule, which the tools check before writing
 * **intel:** new read-only tools: `falcon_search_intel_vulnerabilities` (CrowdStrike's CVE intelligence: exploitation status, severity, CVSS, linked actors and reports), `falcon_search_malware_families` (profiles with ATT&CK techniques and whether the family was seen in the tenant) and `falcon_search_intel_rules` (YARA and Snort/Suricata rule sets)
 * **spotlight:** new read-only `falcon_get_installed_patches` lists each host's installed and pending patches and whether it needs a reboot
 * **ods:** new On-Demand Scans module. Reads (`On-demand scans (ODS):read`): `falcon_search_ods_scans`, `falcon_search_ods_scan_hosts`, `falcon_search_ods_malicious_files` and `falcon_search_ods_scheduled_scans`. Writes (`:write`, hidden by `--read-only`): `falcon_start_ods_scan` (Windows, Linux and macOS paths on hosts or host groups, quarantine off by default), `falcon_cancel_ods_scans` and `falcon_delete_ods_scheduled_scans` (by ID only)

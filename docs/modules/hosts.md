@@ -9,7 +9,9 @@ Accessing and managing CrowdStrike Falcon hosts/devices
 ## API Scopes
 
 - `Hosts:read`
+- `Network Containment Allowlist:read`
 - `Hosts:write`
+- `Network Containment Allowlist:write`
 
 ## Tools
 
@@ -122,6 +124,76 @@ to know whether the sensor will act now or queue the request. Returns
 **Example prompts:**
 
 - "Is host 0123456789abcdef0123456789abcdef online right now?"
+
+### `falcon_search_containment_allowlist`
+
+**Required scopes:** `Network Containment Allowlist:read`
+
+List the network containment allowlist: what contained hosts can still reach.
+
+A contained host loses network access except to the Falcon cloud and these
+rules: IP addresses and ranges (ip_range), DNS servers (ip_dns) and domains
+(fqdn). Check them before containing a host, for example to keep a remediation
+server or patch source reachable. Returns `results`, each with `id`, `type`,
+`rule`, `label`, `options` (`allow_subdomain` for fqdn rules), `created_by` and
+`created_on`, and `counts` by type.
+
+**Example prompts:**
+
+- "What can a contained host still reach?"
+
+### `falcon_create_containment_allowlist_rules`
+
+> [!NOTE]
+> This tool modifies data.
+
+**Required scopes:** `Network Containment Allowlist:read`, `Network Containment Allowlist:write`
+
+Add rules to the network containment allowlist so contained hosts can still reach them.
+
+Every contained host in the tenant can reach what this allowlist names, so add
+only what remediation needs. A domain (fqdn) rule needs at least one DNS server
+(ip_dns) rule, existing or in the same call. Rules that already exist with the
+same type and value are skipped and listed in `already_present`. Returns the
+API's response for the rules added.
+
+**Example prompts:**
+
+- "Let contained hosts reach our remediation subnet 10.20.0.0/16"
+
+### `falcon_update_containment_allowlist_labels`
+
+> [!NOTE]
+> This tool modifies data.
+
+**Required scopes:** `Network Containment Allowlist:read`, `Network Containment Allowlist:write`
+
+Rename network containment allowlist rules.
+
+Only the label changes. To change a rule's type, value or subdomain option,
+delete it and add a new one.
+
+**Example prompts:**
+
+- "Rename the containment allowlist rule for 10.20.0.0/16"
+
+### `falcon_delete_containment_allowlist_rules`
+
+> [!CAUTION]
+> This tool performs destructive operations.
+
+**Required scopes:** `Network Containment Allowlist:read`, `Network Containment Allowlist:write`
+
+Remove rules from the network containment allowlist.
+
+Contained hosts immediately lose access to what the rules allowed, which can cut
+a remediation tool or patch source off from them. The last DNS server (ip_dns)
+rule can't be removed while any domain (fqdn) rule remains. Returns `deleted` and,
+if any removal failed, `failed` with the API's reason.
+
+**Example prompts:**
+
+- "Remove the old patch server from the containment allowlist"
 
 ### `falcon_get_host_network_history`
 
