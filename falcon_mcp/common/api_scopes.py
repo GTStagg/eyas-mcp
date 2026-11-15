@@ -16,6 +16,10 @@ API_SCOPE_REQUIREMENTS = {
     "PostEntitiesAlertsV2": ["Alerts:read"],
     "PostAggregatesAlertsV2": ["Alerts:read"],
     "PatchEntitiesAlertsV3": ["Alerts:write"],
+    # Audit log (query jobs)
+    "CreateQueryJob": ["Audit:read"],
+    "PollQueryJobStatus": ["Audit:read"],
+    "GetQueryResults": ["Audit:read"],
     # Hosts operations
     "QueryDevicesByFilter": ["Hosts:read"],
     "PostDeviceDetailsV2": ["Hosts:read"],

@@ -35,6 +35,8 @@ READS_USING_WRITE_VERBS = frozenset(
         "AggregateNotificationsExposedDataRecordsV1",
         "AggregateNotificationsV1",
         "AggregateRemediations",
+        # Starts an audit log query job; reads the log and changes nothing
+        "CreateQueryJob",
         "GetCaseActivityByIds",
         "GetCaseEntitiesByIDs",
         "GetQuarantineFiles",
