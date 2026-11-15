@@ -13,7 +13,10 @@ from pydantic import AnyUrl, Field
 
 from falcon_mcp.common.logging import get_logger
 from falcon_mcp.modules.base import BaseModule
-from falcon_mcp.resources.spotlight import SEARCH_VULNERABILITIES_FQL_DOCUMENTATION
+from falcon_mcp.resources.spotlight import (
+    INSTALLED_PATCHES_FQL_DOCUMENTATION,
+    SEARCH_VULNERABILITIES_FQL_DOCUMENTATION,
+)
 
 logger = get_logger(__name__)
 
@@ -33,6 +36,11 @@ class SpotlightModule(BaseModule):
             method=self.search_vulnerabilities,
             name="search_vulnerabilities",
         )
+        self._add_tool(
+            server=server,
+            method=self.get_installed_patches,
+            name="get_installed_patches",
+        )
 
     def register_resources(self, server: FastMCP) -> None:
         """Register resources with the MCP server.
@@ -50,6 +58,15 @@ class SpotlightModule(BaseModule):
         self._add_resource(
             server,
             search_vulnerabilities_fql_resource,
+        )
+        self._add_resource(
+            server,
+            TextResource(
+                uri=AnyUrl("falcon://spotlight/installed-patches/fql-guide"),
+                name="falcon_get_installed_patches_fql_guide",
+                description="Contains the guide for the `filter` param of the `falcon_get_installed_patches` tool.",
+                text=INSTALLED_PATCHES_FQL_DOCUMENTATION,
+            ),
         )
 
     def search_vulnerabilities(
@@ -140,3 +157,40 @@ class SpotlightModule(BaseModule):
             )
 
         return self._build_pagination_envelope(vulnerabilities or [], pagination, filter)
+
+    def get_installed_patches(
+        self,
+        filter: str | None = Field(
+            default=None,
+            description=(
+                "FQL filter on aid, cid, hostname or reboot_required (exact match). See "
+                "`falcon://spotlight/installed-patches/fql-guide`."
+            ),
+            examples=["aid:'<host AID>'", "reboot_required:true"],
+        ),
+        limit: int = Field(default=20, ge=1, le=400, description="Hosts per page. [1-400]"),
+        after: str | None = Field(
+            default=None,
+            description="The `pagination.next` value from the previous page.",
+        ),
+        sort: str | None = Field(default=None, description="hostname|asc or hostname|desc."),
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Get the patches installed on hosts, with pending patches and whether a reboot is required.
+
+        Use this to check a host's patch level, or find hosts waiting on a reboot to
+        finish patching. Each record has `aid`, `hostname`, `device_type`,
+        `reboot_required`, `active_patches`, `pending_patches`, `last_patch_confirmed`
+        and `installed_patches` (each with `id` and `status`). For missing patches and
+        open CVEs, use falcon_search_vulnerabilities.
+        Responses include `pagination.total` and `pagination.next`.
+        """
+        records, pagination = self._base_search_with_meta(
+            operation="combinedQueryInstalledPatches",
+            search_params={"filter": filter, "limit": limit, "after": after, "sort": sort},
+            error_message="Failed to get installed patches",
+        )
+        if self._is_error(records):
+            return self._format_fql_error_response(
+                [records], filter, INSTALLED_PATCHES_FQL_DOCUMENTATION
+            )
+        return self._build_pagination_envelope(records, pagination, filter)

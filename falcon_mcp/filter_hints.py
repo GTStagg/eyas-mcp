@@ -61,6 +61,16 @@ FILTER_HINTS: dict[str, str] = {
         "Use status:'contained' to find hosts in network containment. "
         "Ex: platform_name:'Windows'+status:'contained'"
     ),
+    "falcon_get_installed_patches": (
+        "Exact match only: aid, cid, hostname, reboot_required (true|false); negate with !. "
+        "No wildcards or ranges. Ex: reboot_required:true"
+    ),
+    "falcon_search_intel_vulnerabilities": (
+        "Fields: cve, severity (CRITICAL|HIGH|MEDIUM|LOW), exploit_status (e.g. ActivelyUsed), "
+        "cvss_v3_base.score, publish_date, affected_products.vendor, affected_products.product, "
+        "related_actors.name. For free text use q instead. "
+        "Ex: exploit_status:'ActivelyUsed'+severity:'CRITICAL'"
+    ),
     "falcon_search_ods_scans": (
         "Fields: status (pending|running|completed|incomplete|canceled), initiated_from, "
         "description, filecount.malicious, filecount.quarantined, targeted_platforms, "

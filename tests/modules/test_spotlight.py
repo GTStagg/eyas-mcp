@@ -20,6 +20,7 @@ class TestSpotlightModule(TestModules):
         """Test registering tools with the server."""
         expected_tools = [
             "falcon_search_vulnerabilities",
+            "falcon_get_installed_patches",
         ]
         self.assert_tools_registered(expected_tools)
 
@@ -27,6 +28,7 @@ class TestSpotlightModule(TestModules):
         """Test registering resources with the server."""
         expected_resources = [
             "falcon_search_vulnerabilities_fql_guide",
+            "falcon_get_installed_patches_fql_guide",
         ]
         self.assert_resources_registered(expected_resources)
 

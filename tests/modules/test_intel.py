@@ -30,6 +30,9 @@ class TestIntelModule(TestModules):
             "falcon_get_mitre_report",
             "falcon_get_intel_reports",
             "falcon_get_intel_actors",
+            "falcon_search_intel_vulnerabilities",
+            "falcon_search_malware_families",
+            "falcon_search_intel_rules",
         ]
         self.assert_tools_registered(expected_tools)
 
@@ -39,6 +42,7 @@ class TestIntelModule(TestModules):
             "falcon_search_actors_fql_guide",
             "falcon_search_indicators_fql_guide",
             "falcon_search_reports_fql_guide",
+            "falcon_search_intel_vulnerabilities_fql_guide",
         ]
         self.assert_resources_registered(expected_resources)
 

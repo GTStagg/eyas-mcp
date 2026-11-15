@@ -775,6 +775,10 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
         "Dismiss a low-impact Shield check entity with reason 'No longer applicable'",
     ],
     # Spotlight
+    "falcon_get_installed_patches": [
+        "Which hosts need a reboot to finish patching?",
+        "What patches are installed on host 0123456789abcdef0123456789abcdef?",
+    ],
     "falcon_search_vulnerabilities": [
         "Show me open HIGH severity vulnerabilities",
         "Find vulnerabilities on host xyz",
@@ -1012,6 +1016,17 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
     ],
     "falcon_get_intel_reports": [
         "Read the full CrowdStrike intelligence report CSA-260901",
+    ],
+    "falcon_search_intel_vulnerabilities": [
+        "Is CVE-2021-44228 being exploited in the wild, and by whom?",
+        "List critical CVEs CrowdStrike sees actively used",
+    ],
+    "falcon_search_malware_families": [
+        "What does CrowdStrike know about Emotet?",
+        "Which ATT&CK techniques does Cobalt Strike use, and has it been seen here?",
+    ],
+    "falcon_search_intel_rules": [
+        "Find CrowdStrike YARA rule sets about ransomware",
     ],
     "falcon_get_intel_actors": [
         "Give me the full CrowdStrike profile for FANCY BEAR",

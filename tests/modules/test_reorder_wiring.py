@@ -54,6 +54,7 @@ from falcon_mcp.modules.host_groups import HostGroupsModule
 from falcon_mcp.modules.hosts import HostsModule
 from falcon_mcp.modules.hunting import HuntingModule
 from falcon_mcp.modules.idp import IdpModule
+from falcon_mcp.modules.intel import IntelModule
 from falcon_mcp.modules.ioc import IOCModule
 from falcon_mcp.modules.ods import OdsModule
 from falcon_mcp.modules.policies import PoliciesModule
@@ -144,6 +145,21 @@ CASES: list[ReorderCase] = [
         method="search_hidden_hosts",
         id_field="device_id",
         site=("falcon_mcp/modules/hosts.py", "search_hidden_hosts"),
+    ),
+    ReorderCase(
+        tool="falcon_search_intel_vulnerabilities",
+        module_cls=IntelModule,
+        method="search_intel_vulnerabilities",
+        id_field="cve",
+        site=("falcon_mcp/modules/intel.py", "search_intel_vulnerabilities"),
+    ),
+    ReorderCase(
+        tool="falcon_search_intel_rules",
+        module_cls=IntelModule,
+        method="search_intel_rules",
+        id_field="id",
+        site=("falcon_mcp/modules/intel.py", "search_intel_rules"),
+        kwargs={"rule_type": "yara-master"},
     ),
     ReorderCase(
         tool="falcon_search_ods_scans",
