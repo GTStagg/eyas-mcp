@@ -65,8 +65,9 @@ FILTER_HINTS: dict[str, str] = {
         "Sample fields need the sandbox. prefix (sha256 alone matches nothing): "
         "sandbox.sha256, sandbox.verdict, sandbox.threat_score, sandbox.submit_name, "
         "sandbox.environment_id; also verdict (malicious|suspicious|no specific threat|"
-        "whitelisted), id, created_timestamp. "
-        "Ex: verdict:'malicious'+created_timestamp:>'now-7d'"
+        "whitelisted), origin (quarantine|workflow|uiproxy|android: uiproxy is a manual "
+        "console submission), id, created_timestamp. "
+        "Ex: verdict:'malicious'+origin:'quarantine'"
     ),
     "falcon_search_sandbox_submissions": (
         "Fields: state (created|running|success|error), sandbox.sha256, id, "
@@ -122,6 +123,12 @@ FILTER_HINTS: dict[str, str] = {
         "Substring match uses :* (name:*'*.png'); ~ returns nothing. "
         "Prefer the case_ids parameter over a case_id filter. "
         "Ex: name:*'*.png'"
+    ),
+    "falcon_search_case_files": (
+        "Common fields: name (file name), case_id, id (file id), file_size (a string "
+        "such as '114.8 KB'). Substring match uses :* (name:*'*.exe'). Unknown fields "
+        "match nothing rather than failing. Prefer the case_id parameter. "
+        "Ex: name:*'*.exe'"
     ),
     # === Cloud: Kubernetes Containers ===
     "falcon_search_kubernetes_containers": (

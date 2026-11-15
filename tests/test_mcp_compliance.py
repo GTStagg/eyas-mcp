@@ -75,6 +75,7 @@ MUTATING_TOOL_ALLOWLIST: set[str] = {
     "falcon_execute_rtr_read_only_command",
     "falcon_run_rtr_read_only_command_and_wait",
     "falcon_delete_rtr_session",
+    "falcon_delete_rtr_session_file",
     "falcon_run_rtr_read_only_command_on_hosts",
     "falcon_run_falcon_script",
     "falcon_create_rtr_script",
@@ -94,6 +95,9 @@ MUTATING_TOOL_ALLOWLIST: set[str] = {
     "falcon_create_case",
     "falcon_update_case",
     "falcon_add_case_alert_evidence",
+    "falcon_get_rtr_file_metadata",
+    "falcon_retrieve_rtr_file_to_case",
+    "falcon_add_rtr_session_file_to_case",
     "falcon_add_case_event_evidence",
     "falcon_manage_case_tags",
     # correlation_rules module

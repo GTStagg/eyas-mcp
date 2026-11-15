@@ -5,6 +5,7 @@ This module provides tools for managing CrowdStrike cases, including searching,
 creating, updating, and managing evidence and tags.
 """
 
+import re
 from typing import Any, Literal
 
 from mcp.server import FastMCP
@@ -12,7 +13,7 @@ from mcp.server.fastmcp.resources import TextResource
 from mcp.types import ToolAnnotations
 from pydantic import AnyUrl, Field
 
-from falcon_mcp.common.errors import _format_error_response
+from falcon_mcp.common.errors import _format_error_response, handle_api_response
 from falcon_mcp.common.logging import get_logger
 from falcon_mcp.modules.base import BaseModule
 from falcon_mcp.resources.cases import (
@@ -26,6 +27,55 @@ logger = get_logger(__name__)
 
 # Characters that would end or extend a quoted FQL value
 FQL_SPECIAL_CHARS = frozenset("'\"[],\\")
+
+# Retrieving files from hosts into cases
+DEVICE_ID_PATTERN = re.compile(r"[0-9a-fA-F]{32}")
+SHA256_PATTERN = re.compile(r"[0-9a-fA-F]{64}")
+SESSION_ID_PATTERN = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+MAX_FILE_PATH = 1024
+MAX_FILE_DESCRIPTION = 1000
+MAX_CASE_FILES = 500
+
+# Tools that reach a host over RTR or add evidence to a case
+_ADDS_EVIDENCE = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
+)
+
+
+def _check_case_file_inputs(
+    operation: str,
+    case_id: str | None = None,
+    device_id: str | None = None,
+    file_path: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any] | None:
+    """Validate the IDs and path of a host-to-case file request; None when they're fine."""
+    if case_id is not None and (
+        not case_id.strip() or CONTROL_CHARS.search(case_id) or len(case_id) > 128
+    ):
+        return _format_error_response(
+            "Invalid case_id. Find case IDs with falcon_search_cases.", operation=operation
+        )
+    if device_id is not None and not DEVICE_ID_PATTERN.fullmatch(device_id.strip()):
+        return _format_error_response(
+            "device_id must be a host AID (32 hexadecimal characters).", operation=operation
+        )
+    if file_path is not None and (
+        not file_path.strip() or CONTROL_CHARS.search(file_path) or len(file_path) > MAX_FILE_PATH
+    ):
+        return _format_error_response(
+            f"file_path must be a full path on the host, at most {MAX_FILE_PATH} characters, "
+            "without control characters.",
+            operation=operation,
+        )
+    if description is not None and len(description) > MAX_FILE_DESCRIPTION:
+        return _format_error_response(
+            f"description must be at most {MAX_FILE_DESCRIPTION} characters.", operation=operation
+        )
+    return None
 
 
 def _is_filter_error(error: dict[str, Any]) -> bool:
@@ -152,6 +202,27 @@ class CasesModule(BaseModule):
             server=server,
             method=self.aggregate_case_file_details,
             name="aggregate_case_file_details",
+        )
+        self._add_tool(server=server, method=self.search_case_files, name="search_case_files")
+        self._add_tool(
+            server=server,
+            method=self.get_rtr_file_metadata,
+            name="get_rtr_file_metadata",
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True
+            ),
+        )
+        self._add_tool(
+            server=server,
+            method=self.retrieve_rtr_file_to_case,
+            name="retrieve_rtr_file_to_case",
+            annotations=_ADDS_EVIDENCE,
+        )
+        self._add_tool(
+            server=server,
+            method=self.add_rtr_session_file_to_case,
+            name="add_rtr_session_file_to_case",
+            annotations=_ADDS_EVIDENCE,
         )
 
     def register_resources(self, server: FastMCP) -> None:
@@ -961,4 +1032,183 @@ class CasesModule(BaseModule):
                 )
             return [result]
 
+        return result
+
+    # ------------------------------------------------------------------ #
+    # Case files and retrieving files from hosts
+    # ------------------------------------------------------------------ #
+
+    def search_case_files(
+        self,
+        case_id: str | None = Field(
+            default=None,
+            description="Only files attached to this case. Find case IDs with falcon_search_cases.",
+        ),
+        filter: str | None = Field(
+            default=None,
+            description=(
+                "FQL filter on case files, e.g. name:*'*.exe'. See "
+                "`falcon://cases/file-aggregates/fql-guide`."
+            ),
+        ),
+        limit: int = Field(
+            default=50, ge=1, le=MAX_CASE_FILES,
+            description=f"The maximum files to return. [1-{MAX_CASE_FILES}]",
+        ),
+        offset: int = Field(default=0, ge=0, description="The offset to start from."),
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """List the files attached to cases: name, size, type, SHA256, who added them and when.
+
+        Use this to see a case's evidence files, including ones retrieved from hosts
+        with falcon_retrieve_rtr_file_to_case. Each record has `id`, `name`, `case_id`,
+        `file_size`, `file_type`, `hash_value`, `description`, `uploaded_on`,
+        `uploaded_by` and `source`. The API does not report how many files match in
+        total; `pagination.next_offset` is set when a full page came back.
+        """
+        operation = "combined_file_details_get_v1"
+        scoped = filter
+        if case_id is not None:
+            if not case_id.strip() or set(case_id) & FQL_SPECIAL_CHARS:
+                return _format_error_response(
+                    "Invalid case_id: it can't be empty or contain quotes, brackets, commas "
+                    "or backslashes.",
+                    operation=operation,
+                )
+            scope = f"case_id:'{case_id.strip()}'"
+            # Parenthesized so an OR in the caller's filter can't widen the scope
+            scoped = f"{scope}+({filter})" if filter else scope
+
+        parameters: dict[str, Any] = {"limit": limit, "offset": offset}
+        if scoped:
+            parameters["filter"] = scoped
+        response = self.client.command(operation, parameters=parameters)
+        files = handle_api_response(
+            response, operation=operation, error_message="Failed to list case files"
+        )
+        if isinstance(files, dict):
+            return self._format_fql_error_response(
+                [files], scoped, AGGREGATE_CASE_FILE_DETAILS_FQL_DOCUMENTATION
+            )
+        return {
+            "results": files,
+            # The API's pagination.total echoes the page size, so it isn't reported
+            "pagination": {
+                "offset": offset,
+                "limit": limit,
+                "total": None,
+                "next_offset": offset + len(files) if len(files) >= limit else None,
+            },
+        }
+
+    def get_rtr_file_metadata(
+        self,
+        device_id: str = Field(description="The host's AID. Find it with falcon_search_hosts."),
+        file_path: str = Field(
+            description="Full path of the file on the host, e.g. C:\\Users\\Public\\a.exe.",
+        ),
+    ) -> dict[str, Any] | list[Any]:
+        """Read a file's metadata on a host over RTR, without retrieving the file.
+
+        Use this to confirm a file exists on a host and see its details before
+        retrieving it into a case with falcon_retrieve_rtr_file_to_case. The host must
+        be online. Nothing on the host changes, but the request goes through an RTR
+        session on it. Returns the API's response.
+        """
+        operation = "entities_get_rtr_file_metadata_post_v1"
+        problem = _check_case_file_inputs(operation, device_id=device_id, file_path=file_path)
+        if problem:
+            return problem
+        response = self.client.command(
+            operation,
+            body={"aid": device_id.strip().lower(), "file_path": file_path.strip()},
+        )
+        result: dict[str, Any] | list[Any] = handle_api_response(
+            response, operation=operation, error_message="Failed to read the file's metadata"
+        )
+        return result
+
+    def retrieve_rtr_file_to_case(
+        self,
+        case_id: str = Field(description="The case to add the file to."),
+        device_id: str = Field(description="The host's AID. Find it with falcon_search_hosts."),
+        file_path: str = Field(
+            description="Full path of the file on the host, e.g. C:\\Users\\Public\\a.exe.",
+        ),
+        description: str | None = Field(
+            default=None, description="Why the file is being collected."
+        ),
+    ) -> dict[str, Any] | list[Any]:
+        """Collect a file from a host over RTR and attach it to a case as evidence.
+
+        The file goes straight from the host into the case; its content never passes
+        through this server. Use this to preserve a suspicious executable, script or
+        document during an investigation. The host must be online. Afterwards the file
+        appears in falcon_search_case_files with its SHA256. Returns the API's response.
+        """
+        operation = "entities_retrieve_rtr_file_post_v1"
+        problem = _check_case_file_inputs(
+            operation, case_id=case_id, device_id=device_id, file_path=file_path,
+            description=description,
+        )
+        if problem:
+            return problem
+        body: dict[str, Any] = {
+            "case_id": case_id.strip(),
+            "aid": device_id.strip().lower(),
+            "file_path": file_path.strip(),
+        }
+        if description and description.strip():
+            body["description"] = description.strip()
+        response = self.client.command(operation, body=body)
+        result: dict[str, Any] | list[Any] = handle_api_response(
+            response, operation=operation, error_message="Failed to retrieve the file into the case"
+        )
+        return result
+
+    def add_rtr_session_file_to_case(
+        self,
+        case_id: str = Field(description="The case to add the file to."),
+        device_id: str = Field(description="The host's AID the file came from."),
+        session_id: str = Field(
+            description="The RTR session that collected the file, from falcon_list_rtr_session_files.",
+        ),
+        sha256: str = Field(
+            description="SHA256 of the collected file, from falcon_list_rtr_session_files.",
+        ),
+        description: str | None = Field(
+            default=None, description="Why the file is being added."
+        ),
+    ) -> dict[str, Any] | list[Any]:
+        """Attach a file an RTR session already collected (with `get`) to a case.
+
+        Use this when an analyst has fetched a file in an RTR session and it should be
+        kept with the case. List a session's collected files and their SHA256 with
+        falcon_list_rtr_session_files. Returns the API's response.
+        """
+        operation = "entities_retrieve_rtr_recent_file_post_v1"
+        problem = _check_case_file_inputs(
+            operation, case_id=case_id, device_id=device_id, description=description
+        )
+        if problem:
+            return problem
+        if not SESSION_ID_PATTERN.fullmatch(session_id.strip()):
+            return _format_error_response(
+                "session_id must be an RTR session ID (a UUID).", operation=operation
+            )
+        if not SHA256_PATTERN.fullmatch(sha256.strip()):
+            return _format_error_response(
+                "sha256 must be 64 hexadecimal characters.", operation=operation
+            )
+        body: dict[str, Any] = {
+            "case_id": case_id.strip(),
+            "aid": device_id.strip().lower(),
+            "session_id": session_id.strip().lower(),
+            "sha256": sha256.strip().lower(),
+        }
+        if description and description.strip():
+            body["description"] = description.strip()
+        response = self.client.command(operation, body=body)
+        result: dict[str, Any] | list[Any] = handle_api_response(
+            response, operation=operation, error_message="Failed to add the session file to the case"
+        )
         return result

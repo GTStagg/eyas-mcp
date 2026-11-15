@@ -34,6 +34,7 @@ SUBMIT_DEFAULTS = {
     "system_date": None,
     "system_time": None,
     "user_tags": None,
+    "device_id": None,
 }
 
 
@@ -247,6 +248,36 @@ class TestSandboxModule(TestModules):
         self.assertEqual(job["submit_name"], "invoice.docm")
         self.assertNotIn("url", job)
 
+    def test_submit_records_the_host(self):
+        self.mock_client.command.return_value = _ok([{"id": "s3", "state": "created"}])
+
+        self.module.submit_to_sandbox(**{**SUBMIT_DEFAULTS, "sha256": SHA, "device_id": "A" * 32})
+
+        call = self.mock_client.command.call_args
+        self.assertEqual(call[1]["parameters"], {"aid": "a" * 32})
+        self.assertNotIn("aid", call[1]["body"])
+
+    def test_report_keeps_origin_and_submitter(self):
+        self.mock_client.command.return_value = _ok(
+            [
+                {
+                    "id": REPORT,
+                    "origin": "uiproxy",
+                    "user_name": "analyst@example.com",
+                    "user_uuid": "u-1",
+                    "user_id": "",
+                    "sandbox": [],
+                }
+            ]
+        )
+
+        result = self.module.get_sandbox_report(report_id=REPORT, include_informative=False)
+
+        self.assertEqual(result["origin"], "uiproxy")
+        self.assertEqual(result["user_name"], "analyst@example.com")
+        self.assertEqual(result["user_uuid"], "u-1")
+        self.assertNotIn("user_id", result)
+
     def test_submit_validation(self):
         cases = {
             "neither": {},
@@ -258,6 +289,7 @@ class TestSandboxModule(TestModules):
             "bad script": {"url": "https://e.com", "action_script": "rm"},
             "long command line": {"url": "https://e.com", "command_line": "x" * 2049},
             "bad date": {"url": "https://e.com", "system_date": "14/11/2026"},
+            "bad device id": {"url": "https://e.com", "device_id": "host-01"},
         }
         for label, kwargs in cases.items():
             with self.subTest(case=label):

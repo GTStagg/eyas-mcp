@@ -238,6 +238,23 @@ files pulled with the `get` command.
 
 - "List files extracted during RTR session abc123"
 
+### `falcon_delete_rtr_session_file`
+
+> [!CAUTION]
+> This tool performs destructive operations.
+
+**Required scopes:** `Real time response:write`
+
+Delete a file an RTR session collected, from Falcon's session storage.
+
+The file on the host is not touched; only the collected copy is removed. Attach
+a file to a case first with falcon_add_rtr_session_file_to_case if it should
+be kept as evidence.
+
+**Example prompts:**
+
+- "Delete the collected file from this RTR session"
+
 ### `falcon_delete_rtr_session`
 
 > [!CAUTION]

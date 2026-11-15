@@ -21,9 +21,14 @@ Search Falcon Sandbox reports and return their summaries: verdict, threat score,
 
 Use this to see whether a file or URL has been detonated before (filter on
 sandbox.sha256) or to review recent malicious results. Each summary has `id`,
-`verdict`, `created_timestamp` and `sandbox` (with `sha256`, `submit_name`,
-`threat_score`, `environment_description` and `file_type`). Read a whole report
-with falcon_get_sandbox_report.
+`verdict`, `created_timestamp`, `origin` and `sandbox` (with `sha256`,
+`submit_name`, `threat_score`, `environment_description` and `file_type`).
+`origin` says where the sample came from: quarantine (a file Falcon quarantined
+on an endpoint), workflow (Fusion SOAR), uiproxy (submitted by a person in the
+console, who is named in `user_name`), android and others; filter on it, e.g.
+origin:'uiproxy'. Reports don't name the endpoint a file came from: find it by
+SHA256 with falcon_search_quarantined_files or falcon_get_threatgraph_ran_on.
+Read a whole report with falcon_get_sandbox_report.
 Responses include `pagination.total`.
 
 **Example prompts:**
@@ -37,7 +42,8 @@ Responses include `pagination.total`.
 
 Read one sandbox report: what the sample did, trimmed to what an analyst needs.
 
-Returns `id`, `verdict`, `created_timestamp` and `sandbox`, one entry per analysed
+Returns `id`, `verdict`, `created_timestamp`, `origin` (and, for samples a person
+submitted, `user_name` and `user_uuid`) and `sandbox`, one entry per analysed
 sample with its verdict, threat score and file facts, `signatures`,
 `mitre_attacks` (each with `severity`), `processes` (with command lines),
 `network` (contacted hosts, DNS and HTTP requests, Suricata alerts, URLs) and
@@ -82,7 +88,7 @@ hash, without uploading it again. Returns `found` and `not_found`.
 
 **Required scopes:** `Sandbox (Falcon Intelligence):write`
 
-Submit a URL or an uploaded file to Falcon Sandbox for detonation.
+Submit a URL or an uploaded file to Falcon Sandbox to detonate and analyse it.
 
 The sandbox runs the sample in an isolated machine and reports its behaviour,
 usually within 15 minutes. Each submission uses the tenant's sandbox quota.

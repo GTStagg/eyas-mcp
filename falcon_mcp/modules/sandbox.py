@@ -80,6 +80,8 @@ _SECTION_CAP = 100
 _COMMAND_LINE_CAP = 1000
 _DESCRIPTION_CAP = 300
 SEVERE = ("malicious", "suspicious")
+SUBMITTER_FIELDS = ("user_name", "user_uuid", "user_id")
+DEVICE_ID_PATTERN = re.compile(r"[0-9a-fA-F]{32}")
 
 
 def _error(message: str, operation: str) -> dict[str, Any]:
@@ -255,9 +257,14 @@ class SandboxModule(BaseModule):
 
         Use this to see whether a file or URL has been detonated before (filter on
         sandbox.sha256) or to review recent malicious results. Each summary has `id`,
-        `verdict`, `created_timestamp` and `sandbox` (with `sha256`, `submit_name`,
-        `threat_score`, `environment_description` and `file_type`). Read a whole report
-        with falcon_get_sandbox_report.
+        `verdict`, `created_timestamp`, `origin` and `sandbox` (with `sha256`,
+        `submit_name`, `threat_score`, `environment_description` and `file_type`).
+        `origin` says where the sample came from: quarantine (a file Falcon quarantined
+        on an endpoint), workflow (Fusion SOAR), uiproxy (submitted by a person in the
+        console, who is named in `user_name`), android and others; filter on it, e.g.
+        origin:'uiproxy'. Reports don't name the endpoint a file came from: find it by
+        SHA256 with falcon_search_quarantined_files or falcon_get_threatgraph_ran_on.
+        Read a whole report with falcon_get_sandbox_report.
         Responses include `pagination.total`.
         """
         ids, pagination = self._base_search_with_meta(
@@ -293,7 +300,8 @@ class SandboxModule(BaseModule):
     ) -> dict[str, Any]:
         """Read one sandbox report: what the sample did, trimmed to what an analyst needs.
 
-        Returns `id`, `verdict`, `created_timestamp` and `sandbox`, one entry per analysed
+        Returns `id`, `verdict`, `created_timestamp`, `origin` (and, for samples a person
+        submitted, `user_name` and `user_uuid`) and `sandbox`, one entry per analysed
         sample with its verdict, threat score and file facts, `signatures`,
         `mitre_attacks` (each with `severity`), `processes` (with command lines),
         `network` (contacted hosts, DNS and HTTP requests, Suricata alerts, URLs) and
@@ -318,17 +326,20 @@ class SandboxModule(BaseModule):
             return _error(f"No sandbox report with ID {rid}.", operation)
 
         report = reports[0]
-        return {
+        trimmed: dict[str, Any] = {
             "id": report.get("id"),
             "verdict": report.get("verdict"),
             "created_timestamp": report.get("created_timestamp"),
             "origin": report.get("origin"),
-            "sandbox": [
-                _trim_sandbox(s, include_informative)
-                for s in report.get("sandbox") or []
-                if isinstance(s, dict)
-            ],
         }
+        # Who submitted it, on reports a person sent in by hand
+        trimmed.update({k: report[k] for k in SUBMITTER_FIELDS if report.get(k)})
+        trimmed["sandbox"] = [
+            _trim_sandbox(s, include_informative)
+            for s in report.get("sandbox") or []
+            if isinstance(s, dict)
+        ]
+        return trimmed
 
     def search_sandbox_submissions(
         self,
@@ -477,8 +488,15 @@ class SandboxModule(BaseModule):
         user_tags: list[str] | None = Field(
             default=None, description="Tags to label the submission."
         ),
+        device_id: str | None = Field(
+            default=None,
+            description=(
+                "AID of the host the sample came from, recorded with the submission "
+                "(the API's `aid`). Leave it out for a sample that didn't come from a host."
+            ),
+        ),
     ) -> dict[str, Any]:
-        """Submit a URL or an uploaded file to Falcon Sandbox for detonation.
+        """Submit a URL or an uploaded file to Falcon Sandbox to detonate and analyse it.
 
         The sandbox runs the sample in an isolated machine and reports its behaviour,
         usually within 15 minutes. Each submission uses the tenant's sandbox quota.
@@ -511,6 +529,9 @@ class SandboxModule(BaseModule):
             return _error("system_date must look like 2026-11-14.", operation)
         if system_time is not None and not TIME_PATTERN.fullmatch(system_time):
             return _error("system_time must look like 13:45.", operation)
+        aid = device_id.strip().lower() if isinstance(device_id, str) and device_id.strip() else None
+        if aid and not DEVICE_ID_PATTERN.fullmatch(aid):
+            return _error("device_id must be a host AID (32 hexadecimal characters).", operation)
 
         job: dict[str, Any] = {"environment_id": environment_id, "network_settings": network_settings}
         if target_url:
@@ -531,7 +552,11 @@ class SandboxModule(BaseModule):
         if tags:
             body["user_tags"] = tags
 
-        response = self.client.command(operation, body=body)
+        if aid:
+            # `aid` is a query parameter, not part of the body
+            response = self.client.command(operation, parameters={"aid": aid}, body=body)
+        else:
+            response = self.client.command(operation, body=body)
         submissions = handle_api_response(
             response, operation=operation, error_message="Failed to submit to the sandbox"
         )

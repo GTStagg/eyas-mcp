@@ -67,6 +67,9 @@ READ_ONLY_RTR_SUBCOMMANDS = {"reg": frozenset({"query"})}
 DEVICE_ID_PATTERN = re.compile(r"[0-9a-fA-F]{32}")
 MAX_BATCH_HOSTS = 100
 
+# Session and session-file IDs: letters, digits and dashes only
+_SESSION_FILE_ID = re.compile(r"[A-Za-z0-9-]{1,128}")
+
 # Falcon script names are written into the command string between triple backticks,
 # so only a plain identifier is accepted, and only one the live catalog lists.
 FALCON_SCRIPT_NAME_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
@@ -414,6 +417,18 @@ class RTRModule(BaseModule):
             server=server,
             method=self.list_session_files,
             name="list_rtr_session_files",
+        )
+
+        self._add_tool(
+            server=server,
+            method=self.delete_session_file,
+            name="delete_rtr_session_file",
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=True,
+                idempotentHint=True,
+                openWorldHint=True,
+            ),
         )
 
         self._add_tool(
@@ -2046,6 +2061,37 @@ class RTRModule(BaseModule):
             query_params={"session_id": session_id},
             error_message="Failed to list RTR session files",
         )
+
+    def delete_session_file(
+        self,
+        session_id: str = Field(
+            description="RTR session ID the file was collected in.",
+        ),
+        file_id: str = Field(
+            description="The file's `id` from falcon_list_rtr_session_files.",
+        ),
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Delete a file an RTR session collected, from Falcon's session storage.
+
+        The file on the host is not touched; only the collected copy is removed. Attach
+        a file to a case first with falcon_add_rtr_session_file_to_case if it should
+        be kept as evidence.
+        """
+        operation = "RTR_DeleteFileV2"
+        sid = session_id.strip() if isinstance(session_id, str) else ""
+        fid = file_id.strip() if isinstance(file_id, str) else ""
+        if not _SESSION_FILE_ID.fullmatch(sid) or not _SESSION_FILE_ID.fullmatch(fid):
+            return _format_error_response(
+                "session_id and file_id must come from falcon_list_rtr_session_files.",
+                operation=operation,
+            )
+        response = self.client.command(operation, parameters={"session_id": sid, "ids": fid})
+        if response.get("status_code") not in (200, 202, 204):
+            error: dict[str, Any] = handle_api_response(
+                response, operation=operation, error_message="Failed to delete the session file"
+            )
+            return error
+        return {"deleted": True, "session_id": sid, "file_id": fid}
 
     def delete_session(
         self,

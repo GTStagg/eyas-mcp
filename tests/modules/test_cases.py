@@ -38,6 +38,10 @@ class TestCasesModule(TestModules):
             "falcon_aggregate_case_access_tags",
             "falcon_aggregate_case_notification_groups",
             "falcon_aggregate_case_file_details",
+            "falcon_search_case_files",
+            "falcon_get_rtr_file_metadata",
+            "falcon_retrieve_rtr_file_to_case",
+            "falcon_add_rtr_session_file_to_case",
         ]
         self.assert_tools_registered(expected_tools)
 
