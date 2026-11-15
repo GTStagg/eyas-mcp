@@ -177,6 +177,18 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
         "How many case notification groups are configured?",
         "Show notification group counts by creator",
     ],
+    "falcon_search_case_files": [
+        "What files are attached to this case?",
+    ],
+    "falcon_get_rtr_file_metadata": [
+        "Does C:\\Users\\Public\\update.exe exist on host 0123456789abcdef0123456789abcdef?",
+    ],
+    "falcon_retrieve_rtr_file_to_case": [
+        "Collect C:\\Users\\Public\\update.exe from this host into the case",
+    ],
+    "falcon_add_rtr_session_file_to_case": [
+        "Add the file I pulled in this RTR session to the case",
+    ],
     "falcon_aggregate_case_file_details": [
         "What file names show up most often across case attachments?",
         "How many files are attached to these two cases?",
@@ -787,6 +799,9 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
     ],
     "falcon_list_rtr_session_files": [
         "List files extracted during RTR session abc123",
+    ],
+    "falcon_delete_rtr_session_file": [
+        "Delete the collected file from this RTR session",
     ],
     "falcon_delete_rtr_session": [
         "End the RTR session abc123",

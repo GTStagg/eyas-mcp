@@ -241,6 +241,69 @@ Cases:read scope.
 - "What file names show up most often across case attachments?"
 - "How many files are attached to these two cases?"
 
+### `falcon_search_case_files`
+
+**Required scopes:** `Cases:read`
+
+List the files attached to cases: name, size, type, SHA256, who added them and when.
+
+Use this to see a case's evidence files, including ones retrieved from hosts
+with falcon_retrieve_rtr_file_to_case. Each record has `id`, `name`, `case_id`,
+`file_size`, `file_type`, `hash_value`, `description`, `uploaded_on`,
+`uploaded_by` and `source`. The API does not report how many files match in
+total; `pagination.next_offset` is set when a full page came back.
+
+**Example prompts:**
+
+- "What files are attached to this case?"
+
+### `falcon_get_rtr_file_metadata`
+
+> [!NOTE]
+> This tool modifies data.
+
+**Required scopes:** `Cases:read`
+
+Read a file's metadata on a host over RTR, without retrieving the file.
+
+Use this to confirm a file exists on a host and see its details before
+retrieving it into a case with falcon_retrieve_rtr_file_to_case. The host must
+be online. Nothing on the host changes, but the request goes through an RTR
+session on it. Returns the API's response.
+
+**Example prompts:**
+
+- "Does C:\Users\Public\update.exe exist on host 0123456789abcdef0123456789abcdef?"
+
+### `falcon_retrieve_rtr_file_to_case`
+
+**Required scopes:** `Cases:write`
+
+Collect a file from a host over RTR and attach it to a case as evidence.
+
+The file goes straight from the host into the case; its content never passes
+through this server. Use this to preserve a suspicious executable, script or
+document during an investigation. The host must be online. Afterwards the file
+appears in falcon_search_case_files with its SHA256. Returns the API's response.
+
+**Example prompts:**
+
+- "Collect C:\Users\Public\update.exe from this host into the case"
+
+### `falcon_add_rtr_session_file_to_case`
+
+**Required scopes:** `Cases:write`
+
+Attach a file an RTR session already collected (with `get`) to a case.
+
+Use this when an analyst has fetched a file in an RTR session and it should be
+kept with the case. List a session's collected files and their SHA256 with
+falcon_list_rtr_session_files. Returns the API's response.
+
+**Example prompts:**
+
+- "Add the file I pulled in this RTR session to the case"
+
 ## Resources
 
 - **`falcon://cases/search/fql-guide`**: Contains the guide for the `filter` param of the `falcon_search_cases` tool.

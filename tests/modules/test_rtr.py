@@ -46,6 +46,7 @@ class TestRTRModule(TestModules):
             "falcon_delete_rtr_scripts",
             "falcon_run_rtr_script_on_hosts",
             "falcon_check_rtr_admin_command_status",
+            "falcon_delete_rtr_session_file",
         ]
         self.assert_tools_registered(expected_tools)
 

@@ -123,6 +123,12 @@ FILTER_HINTS: dict[str, str] = {
         "Prefer the case_ids parameter over a case_id filter. "
         "Ex: name:*'*.png'"
     ),
+    "falcon_search_case_files": (
+        "Common fields: name (file name), case_id, id (file id), file_size (a string "
+        "such as '114.8 KB'). Substring match uses :* (name:*'*.exe'). Unknown fields "
+        "match nothing rather than failing. Prefer the case_id parameter. "
+        "Ex: name:*'*.exe'"
+    ),
     # === Cloud: Kubernetes Containers ===
     "falcon_search_kubernetes_containers": (
         "Common fields: cluster_name, namespace, container_name, "

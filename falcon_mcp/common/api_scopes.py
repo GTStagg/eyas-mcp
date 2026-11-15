@@ -186,6 +186,7 @@ API_SCOPE_REQUIREMENTS = {
     "RTR_CheckCommandStatus": ["Real time response:read"],
     "RTR_ExecuteCommand": ["Real time response:read"],
     "RTR_ListFilesV2": ["Real time response:write"],
+    "RTR_DeleteFileV2": ["Real time response:write"],
     "RTRAuditSessions": ["real-time-response-audit:read"],
     "RTR_AggregateSessions": ["Real time response:read"],
     # Quarantine operations
@@ -245,6 +246,10 @@ API_SCOPE_REQUIREMENTS = {
     "aggregates_access_tags_post_v1": ["Case Templates:read"],
     "aggregates_notification_groups_post_v2": ["Case Templates:read"],
     "aggregates_file_details_post_v1": ["Cases:read"],
+    "combined_file_details_get_v1": ["Cases:read"],
+    "entities_get_rtr_file_metadata_post_v1": ["Cases:read"],
+    "entities_retrieve_rtr_file_post_v1": ["Cases:write"],
+    "entities_retrieve_rtr_recent_file_post_v1": ["Cases:write"],
     # Correlation Rules operations
     "combined_rules_get_v2": ["Correlation Rules:read"],
     "entities_rules_post_v1": ["Correlation Rules:write"],
