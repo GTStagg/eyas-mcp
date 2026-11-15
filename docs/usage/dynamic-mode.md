@@ -202,7 +202,8 @@ Every response carries `total` (the number of tools matching the query, before a
 truncated, raise `limit` (up to 500) or narrow the query. The default is 50: lean discovery entries
 are cheap enough that a wide window costs less than a narrow one did with schemas attached, and
 because generic words no longer widen the candidate set, ordinary keyword queries land well inside
-it — a query like `host` matches 40 tools and is not truncated at all. In schema mode `total` counts
+it — a query like `detection` matches about 30 tools and is not truncated at all. A very broad word
+such as `host` matches more than the default 50, and `truncated` says so. In schema mode `total` counts
 the entries returned, since no query ran for it to describe.
 
 If no tools match, none of the query's non-generic words appears anywhere in the available surface.

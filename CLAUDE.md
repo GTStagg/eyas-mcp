@@ -27,12 +27,12 @@ The `falcon_mcp` package, `FALCON_MCP_*` variables and `falcon_*` tool names sta
 
 Any MCP client may drive this server, so a tool's annotations are its safety contract. Every tool that changes tenant state must declare `readOnlyHint=False` and an accurate `destructiveHint`. New write tools must respect `--read-only`.
 
-`_add_tool` defaults to read-only, so a forgotten annotation looks safe. `tests/test_tool_safety.py` catches that by checking each tool's hints against the Falcon operations it reaches. Add to its reviewed list of reads only after confirming the operation can't change tenant state.
+`_add_tool` defaults to read-only, so a forgotten annotation looks safe. `tests/test_tool_safety.py` catches that by checking each tool's hints against the Falcon operations it reaches. Add to its reviewed list of reads only after confirming the operation can't change tenant state. The check reads every quoted word in a tool's code, so put operation names that appear in descriptions in backticks, not quotes.
 
 A new tool also needs:
 
 - a scope entry for every operation it calls, in `falcon_mcp/common/api_scopes.py`
-- a hint in `falcon_mcp/filter_hints.py` if it takes an FQL filter
+- a hint in `falcon_mcp/filter_hints.py` if it takes an FQL filter, and an FQL guide resource in its module at `falcon://{module}/{path}/{kind}-guide`
 - for write tools, an entry in `MUTATING_TOOL_ALLOWLIST` in `tests/test_mcp_compliance.py`
 - a case in `tests/modules/test_reorder_wiring.py` if it calls `_reorder_by_ids`
 - an updated registration count in its module's tests
