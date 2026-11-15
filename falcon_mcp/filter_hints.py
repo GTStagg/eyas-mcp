@@ -61,6 +61,12 @@ FILTER_HINTS: dict[str, str] = {
         "Use status:'contained' to find hosts in network containment. "
         "Ex: platform_name:'Windows'+status:'contained'"
     ),
+    "falcon_search_users": (
+        "Fields: uid (login email), first_name, last_name, name, status, "
+        "has_temporary_roles, assigned_cids, cid. "
+        "Substring match uses :* (uid:*'*@example.com'). "
+        "Ex: status:'active'+uid:*'*jdoe*'"
+    ),
     "falcon_search_hidden_hosts": (
         "Same fields as falcon_search_hosts: hostname, platform_name (Windows|Linux|Mac), "
         "local_ip, external_ip, os_version, last_seen, first_seen. "

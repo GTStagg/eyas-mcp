@@ -40,4 +40,5 @@ eyas-mcp provides the following modules. Each module requires specific CrowdStri
 | [Shield](shield.md) | `SaaS Security:read`, `SaaS Security:write` | Shield module for CrowdStrike Falcon. |
 | [Spotlight](spotlight.md) | `Vulnerabilities:read` | Accessing and managing CrowdStrike Falcon Spotlight vulnerabilities |
 | [Threat Graph](threatgraph.md) | `Threatgraph:read` | This module provides read-only tools for looking up vertices and walking edges in CrowdStrike Falcon Threat Graph |
+| [Users and Roles](users.md) | `User Management:read`, `User Management:write` | Falcon console users and roles: search users, see who holds which roles and what a role permits, grant or revoke roles, reset a user's password or 2FA, and create, rename or delete users |
 | [Zero Trust Assessment](zero-trust-assessment.md) | `Zero Trust Assessment:read` | Retrieving Zero Trust Assessment posture scores and sensor and OS hardening signals for hosts |
