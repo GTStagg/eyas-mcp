@@ -20,6 +20,18 @@ API_SCOPE_REQUIREMENTS = {
     "CreateQueryJob": ["Audit:read"],
     "PollQueryJobStatus": ["Audit:read"],
     "GetQueryResults": ["Audit:read"],
+    # On-demand scans
+    "query_scans": ["On-demand scans (ODS):read"],
+    "get_scans_by_scan_ids_v2": ["On-demand scans (ODS):read"],
+    "query_scan_host_metadata": ["On-demand scans (ODS):read"],
+    "get_scan_host_metadata_by_ids": ["On-demand scans (ODS):read"],
+    "query_malicious_files": ["On-demand scans (ODS):read"],
+    "get_malicious_files_by_ids": ["On-demand scans (ODS):read"],
+    "query_scheduled_scans": ["On-demand scans (ODS):read"],
+    "get_scheduled_scans_by_scan_ids": ["On-demand scans (ODS):read"],
+    "create_scan": ["On-demand scans (ODS):write"],
+    "cancel_scans": ["On-demand scans (ODS):write"],
+    "delete_scheduled_scans": ["On-demand scans (ODS):write"],
     # Falcon Sandbox
     "QueryReports": ["Sandbox (Falcon Intelligence):read"],
     "GetSummaryReports": ["Sandbox (Falcon Intelligence):read"],

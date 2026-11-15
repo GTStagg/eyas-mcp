@@ -46,6 +46,10 @@ MUTATING_TOOL_ALLOWLIST: set[str] = {
     "falcon_hide_hosts",
     "falcon_unhide_hosts",
     "falcon_delete_hosts",
+    # ods module
+    "falcon_start_ods_scan",
+    "falcon_cancel_ods_scans",
+    "falcon_delete_ods_scheduled_scans",
     # sandbox module
     "falcon_submit_to_sandbox",
     "falcon_upload_sandbox_sample",

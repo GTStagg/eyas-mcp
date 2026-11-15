@@ -55,6 +55,7 @@ from falcon_mcp.modules.hosts import HostsModule
 from falcon_mcp.modules.hunting import HuntingModule
 from falcon_mcp.modules.idp import IdpModule
 from falcon_mcp.modules.ioc import IOCModule
+from falcon_mcp.modules.ods import OdsModule
 from falcon_mcp.modules.policies import PoliciesModule
 from falcon_mcp.modules.quarantine import QuarantineModule
 from falcon_mcp.modules.recon import ReconModule
@@ -143,6 +144,13 @@ CASES: list[ReorderCase] = [
         method="search_hidden_hosts",
         id_field="device_id",
         site=("falcon_mcp/modules/hosts.py", "search_hidden_hosts"),
+    ),
+    ReorderCase(
+        tool="falcon_search_ods_scans",
+        module_cls=OdsModule,
+        method="search_ods_scans",
+        id_field="id",
+        site=("falcon_mcp/modules/ods.py", "_search"),
     ),
     ReorderCase(
         tool="falcon_search_sandbox_reports",

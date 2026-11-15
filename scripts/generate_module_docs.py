@@ -64,6 +64,10 @@ MODULE_METADATA: dict[str, dict[str, Any]] = {
     "idp": {
         "title": "Identity Protection",
     },
+    "ods": {
+        "title": "On-Demand Scans",
+        "slug": "on-demand-scans",
+    },
     "sandbox": {
         "title": "Falcon Sandbox",
     },
@@ -380,6 +384,27 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
     ],
     "falcon_get_host_details": [
         "Get the full details for host device abc123",
+    ],
+    "falcon_search_ods_scans": [
+        "Did any on-demand scan this week find malware?",
+    ],
+    "falcon_search_ods_scan_hosts": [
+        "How did the last on-demand scan go on each host?",
+    ],
+    "falcon_search_ods_malicious_files": [
+        "What malicious files did the scan find, and were they quarantined?",
+    ],
+    "falcon_search_ods_scheduled_scans": [
+        "List the recurring scans set up in the console",
+    ],
+    "falcon_start_ods_scan": [
+        "Scan C:\\Users\\** on these three hosts and quarantine anything malicious",
+    ],
+    "falcon_cancel_ods_scans": [
+        "Cancel the on-demand scan that is still running",
+    ],
+    "falcon_delete_ods_scheduled_scans": [
+        "Delete the old weekly scheduled scan",
     ],
     "falcon_search_sandbox_reports": [
         "Has this SHA256 been detonated in the sandbox before?",
