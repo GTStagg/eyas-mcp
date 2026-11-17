@@ -28,6 +28,6 @@ This gives tools like Claude Desktop, VS Code, Gemini CLI, and custom agents dir
 | [Audit Firewall Rules](modules/firewall.md) | Search and manage Falcon firewall rule groups. |
 <!-- /component:card-grid -->
 
-Plus Real Time Response, Case Management, Scheduled Reports, Shield, and more — [see all modules](modules/overview.md).
+Plus Real Time Response, Case Management, Scheduled Reports, Shield, and more — [see all modules](modules/overview.md). For what eyas-mcp has added since its import from falcon-mcp v0.20.2, see [What eyas-mcp Adds](capabilities.md).
 
 Ready to get started? Follow the [quickstart guide](getting-started/quickstart.md) to connect your first AI assistant in under 5 minutes.
