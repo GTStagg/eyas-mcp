@@ -41,6 +41,7 @@ from pydantic.fields import FieldInfo
 import falcon_mcp
 from falcon_mcp.client import FalconClient
 from falcon_mcp.modules.agentworks import AgentworksModule
+from falcon_mcp.modules.browser import BrowserModule
 from falcon_mcp.modules.cases import CasesModule
 from falcon_mcp.modules.cloud.cloud import CloudModule
 from falcon_mcp.modules.custom_ioa import CustomIOAModule
@@ -504,6 +505,29 @@ CASES: list[ReorderCase] = [
             "search_agentworks_spans",
         )
     ],
+    # One reorder call in the browser module's _query_then_get helper serves the agent
+    # search (when filtering on protection_type, which only the ID query honours) and
+    # the rule search.
+    ReorderCase(
+        tool="falcon_search_browser_agents",
+        module_cls=BrowserModule,
+        method="search_browser_agents",
+        id_field="id",
+        kwargs={"protection_type": "Extension"},
+        query_patch="client.command",
+        get_patch="client.command",
+        site=("falcon_mcp/modules/browser.py", "_query_then_get"),
+    ),
+    ReorderCase(
+        tool="falcon_search_browser_rules",
+        module_cls=BrowserModule,
+        method="search_browser_rules",
+        id_field="id",
+        kwargs={"category": "protection"},
+        query_patch="client.command",
+        get_patch="client.command",
+        site=("falcon_mcp/modules/browser.py", "_query_then_get"),
+    ),
 ]
 
 

@@ -5,6 +5,10 @@
 
 ## Unreleased
 
+### Features
+
+* **browser:** new Seraphic Enterprise Browser module. Reads (`Secure Access:read`): `falcon_search_browser_agents` (agents by hostname, user, browser, status, protection type, OS and first or last seen), `falcon_get_browser_agents`, `falcon_search_browser_rules` (policy rules in one of 11 categories) and `falcon_get_browser_rules`, `falcon_get_browser_extension_analysis` (an extension's risk score, reputation, permissions and code findings, trimmed from records of several megabytes) and `falcon_get_browser_tenant_settings`. Writes (`Secure Access:write`, hidden by `--read-only`): `falcon_activate_browser_agents`, `falcon_deactivate_browser_agents` and `falcon_run_browser_agent_tasks` (close all windows, refresh all tabs or remove browsing data on one agent). Domain classification, URL lists, the Seraphic audit log and the notification task are left out: classification needs a write scope, and the others need IDs or arguments the API doesn't document
+
 ### Documentation
 
 * new [What eyas-mcp Adds](capabilities.md) page summarizing the capabilities added since the import from falcon-mcp v0.20.2, linked from the README and the docs overview
