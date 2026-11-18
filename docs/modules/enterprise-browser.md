@@ -1,10 +1,10 @@
 <!-- meta:title Seraphic Enterprise Browser -->
-<!-- meta:description Falcon Seraphic Enterprise Browser: search the browser agents running in users' browsers, read the browser policy rules, check a browser extension's risk analysis and read the tenant's Seraphic settings; activate or deactivate agents; and queue response tasks on an agent, such as closing every window or removing browsing data -->
+<!-- meta:description Falcon Seraphic Enterprise Browser: search the browser agents running in users' browsers, read the browser policy rules, destination groups and sensitive data profiles, check a browser extension's risk analysis and read the tenant's Seraphic settings; activate or deactivate agents; queue response tasks on an agent, such as closing every window or removing browsing data; manage destination groups and sensitive data profiles; and change a rule's status or its extension list -->
 <!-- meta:section modules -->
 <!-- meta:link-base /eyas-mcp/ -->
 <!-- frontmatter:sidebar order:10 -->
 
-Falcon Seraphic Enterprise Browser: search the browser agents running in users' browsers, read the browser policy rules, check a browser extension's risk analysis and read the tenant's Seraphic settings; activate or deactivate agents; and queue response tasks on an agent, such as closing every window or removing browsing data
+Falcon Seraphic Enterprise Browser: search the browser agents running in users' browsers, read the browser policy rules, destination groups and sensitive data profiles, check a browser extension's risk analysis and read the tenant's Seraphic settings; activate or deactivate agents; queue response tasks on an agent, such as closing every window or removing browsing data; manage destination groups and sensitive data profiles; and change a rule's status or its extension list
 
 ## API Scopes
 
@@ -138,3 +138,187 @@ tasks when it next checks in.
 **Example prompts:**
 
 - "Remove browsing data and close all windows on that user's browser"
+
+### `falcon_search_browser_destination_groups`
+
+**Required scopes:** `Secure Access:read`
+
+Search Seraphic Enterprise Browser destination groups: the named sets of sites the browser allows or blocks.
+
+Each group has `id`, `name`, `description`, `domains` (wildcards such as
+*.example.com allowed), `singleIps` (addresses or CIDR ranges), `ipsRange`,
+`countries`, `classification` (site categories such as Gambling or AI
+Related), `default` (true for Seraphic's built-in groups) and a usage count.
+The tenant's own groups come first and Seraphic's built-in ones after them,
+each part sorted by `sort_by`.
+
+**Example prompts:**
+
+- "Which browser destination groups block gambling sites?"
+
+### `falcon_get_browser_destination_groups`
+
+**Required scopes:** `Secure Access:read`
+
+Get Seraphic Enterprise Browser destination groups by ID, with the IDs that matched no group in `not_found`.
+
+**Example prompts:**
+
+- "Show the domains in destination group 3f2a9c4e-8b1d-4e6f-9a2b-7c5d0e1f2a3b"
+
+### `falcon_search_browser_data_profiles`
+
+**Required scopes:** `Secure Access:read`
+
+Search Seraphic Enterprise Browser sensitive data profiles: the patterns browser DLP looks for.
+
+Each profile has `id`, `name`, `description`, `custom_regex` (name, regex
+and threshold), `predefined_piis` (CrowdStrike's built-in detectors),
+`apply_exact_match`, who created it, and what uses it.
+
+**Example prompts:**
+
+- "Which sensitive data profiles do the browser DLP rules use?"
+
+### `falcon_get_browser_data_profiles`
+
+**Required scopes:** `Secure Access:read`
+
+Get Seraphic Enterprise Browser sensitive data profiles by ID, with what uses each and IDs that matched nothing in `not_found`.
+
+**Example prompts:**
+
+- "Show the regexes in sensitive data profile 4a3b0d5f-9c2e-4f70-8b3c-8d6e1f2a3b4c"
+
+### `falcon_create_browser_destination_group`
+
+> [!NOTE]
+> This tool modifies data.
+
+**Required scopes:** `Secure Access:write`
+
+Create a Seraphic Enterprise Browser destination group, a named set of sites for browser rules to allow or block.
+
+Give at least one of domains, single_ips, countries or classifications. The
+group does nothing until it is attached in the console.
+
+**Example prompts:**
+
+- "Create a destination group for our file-sharing vendors' domains"
+
+### `falcon_update_browser_destination_group`
+
+> [!CAUTION]
+> This tool performs destructive operations.
+
+**Required scopes:** `Secure Access:read`, `Secure Access:write`
+
+Add or remove sites in a Seraphic Enterprise Browser destination group, or rename it.
+
+The tool reads the group, applies the additions and removals, and sends the
+resulting lists, so entries not named stay as they are. The change applies
+wherever the group is used. Seraphic's built-in groups can't be changed here.
+
+**Example prompts:**
+
+- "Add *.example.com to the approved AI tools destination group"
+
+### `falcon_delete_browser_destination_group`
+
+> [!CAUTION]
+> This tool performs destructive operations.
+
+**Required scopes:** `Secure Access:read`, `Secure Access:write`
+
+Delete a Seraphic Enterprise Browser destination group. This cannot be undone.
+
+Refuses Seraphic's built-in groups and groups still in use; detach the
+group first.
+
+**Example prompts:**
+
+- "Delete the unused test destination group"
+
+### `falcon_create_browser_data_profile`
+
+> [!NOTE]
+> This tool modifies data.
+
+**Required scopes:** `Secure Access:write`
+
+Create a Seraphic Enterprise Browser sensitive data profile from custom regexes, for browser DLP rules to detect.
+
+The profile does nothing until it is attached in the console. CrowdStrike's
+predefined PII detectors aren't offered here, because their names aren't
+documented.
+
+**Example prompts:**
+
+- "Create a sensitive data profile that detects our employee ID format"
+
+### `falcon_update_browser_data_profile`
+
+> [!CAUTION]
+> This tool performs destructive operations.
+
+**Required scopes:** `Secure Access:read`, `Secure Access:write`
+
+Add, replace or remove the regexes in a Seraphic Enterprise Browser sensitive data profile, or rename it.
+
+The tool reads the profile, applies the changes and sends the resulting regex
+list, so regexes not named stay as they are. The change applies wherever
+the profile is used.
+
+**Example prompts:**
+
+- "Add a regex for project codes to the internal identifiers profile"
+
+### `falcon_delete_browser_data_profile`
+
+> [!CAUTION]
+> This tool performs destructive operations.
+
+**Required scopes:** `Secure Access:read`, `Secure Access:write`
+
+Delete a Seraphic Enterprise Browser sensitive data profile. This cannot be undone.
+
+Refuses a profile still in use; detach it first.
+
+**Example prompts:**
+
+- "Delete the sensitive data profile no rule uses"
+
+### `falcon_set_browser_rule_status`
+
+> [!CAUTION]
+> This tool performs destructive operations.
+
+**Required scopes:** `Secure Access:read`, `Secure Access:write`
+
+Turn a Seraphic Enterprise Browser policy rule on or off by setting its status to active or inactive.
+
+Setting a protection or DLP rule inactive stops the browser enforcing it for
+everyone it targets. Read the rule with falcon_get_browser_rules first.
+
+**Example prompts:**
+
+- "Turn off browser rule 1042"
+
+### `falcon_update_browser_rule_extensions`
+
+> [!CAUTION]
+> This tool performs destructive operations.
+
+**Required scopes:** `Secure Access:read`, `Secure Access:write`
+
+Add or remove browser extensions on a Seraphic Enterprise Browser extension rule's list.
+
+Whether the listed extensions are blocked or allowed depends on the rule, so
+read it with falcon_get_browser_rules first. Check an extension with
+falcon_get_browser_extension_analysis before allowing it. The API applies each
+kind of change separately, so the tool sends one call per kind and stops at
+the first failure; `applied` lists what went through.
+
+**Example prompts:**
+
+- "Add this extension to the browser's extension block rule"

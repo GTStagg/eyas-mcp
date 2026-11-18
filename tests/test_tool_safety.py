@@ -39,6 +39,8 @@ READS_USING_WRITE_VERBS = frozenset(
         "CombinedQueryAgents",
         "QueryAgents",
         "QueryRulesMixin0",
+        "QueryDestinationGroups",
+        "QuerySensitiveDataProfiles",
         # Starts an audit log query job; reads the log and changes nothing
         "CreateQueryJob",
         "GetCaseActivityByIds",
