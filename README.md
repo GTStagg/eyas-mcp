@@ -25,12 +25,13 @@ See the [`docs/`](docs/overview.md) folder for configuration, usage and module r
 
 ## What eyas-mcp Adds
 
-Since the import from falcon-mcp v0.20.2, eyas-mcp has grown from 28 modules and 170 tools to 36 modules and 273 as of 0.22.0, with none removed or renamed. The additions include:
+Since the import from falcon-mcp v0.20.2, eyas-mcp has grown from 28 modules and 170 tools to 37 modules and 294 as of 0.23.0, with none removed or renamed. The additions include:
 
 - **Host incident response:** containment and its allowlist, a custom RTR script library, multi-host scripts, on-demand scans, and collecting files from hosts into cases.
 - **Investigation:** process trees, Threat Graph pivots, MalQuery, hunting guides, and host-to-identity correlation.
 - **Malware analysis and threat intelligence:** Falcon Sandbox, CVE exploitation intelligence, malware families, and YARA and Snort rule sets.
 - **Governance:** the audit log, and users, roles and permissions.
+- **Enterprise browser:** Seraphic browser agents and response tasks, policy rules, extension risk analysis, destination groups and sensitive data profiles.
 - **Safety:** tool annotations checked against the Falcon operations each tool calls, input checks against filter and command injection, and an option to require an API key on the HTTP transports.
 
 See [What eyas-mcp Adds](docs/capabilities.md) for the full overview.

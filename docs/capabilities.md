@@ -8,11 +8,11 @@ eyas-mcp was imported from falcon-mcp v0.20.2 and has been developed independent
 
 ## At a glance
 
-| | falcon-mcp v0.20.2 | eyas-mcp 0.22.0 |
+| | falcon-mcp v0.20.2 | eyas-mcp 0.23.0 |
 |---|---|---|
-| Modules | 28 | 36 |
-| Tools | 170 | 273 (103 added, none removed or renamed) |
-| Tools that change tenant state | 47 | 81 |
+| Modules | 28 | 37 |
+| Tools | 170 | 294 (124 added, none removed or renamed) |
+| Tools that change tenant state | 47 | 92 |
 | FalconPy minimum | 1.6.4 | 1.6.7 |
 
 Tool names, the `falcon_mcp` package and the `FALCON_MCP_*` variables are unchanged, so existing prompts and configurations keep working.
@@ -57,6 +57,7 @@ The import point could find hosts and run read-only Real Time Response (RTR) com
 - **Falcon Complete:** read, open and reply to Message Center cases, and count escalations, remediations and other dashboard data.
 - **AI agent security:** Guardian lookups and fleet-wide tool and skill usage rankings, and AI agents built in SaaS platforms connected to Shield.
 - **Spotlight:** each host's installed and pending patches.
+- **Seraphic Enterprise Browser:** find browser agents and turn them on or off, close windows, refresh tabs or remove browsing data on one, read policy rules and turn them on or off, check an extension's risk analysis, and manage the destination groups and sensitive data profiles rules use.
 
 ## Under the hood
 
