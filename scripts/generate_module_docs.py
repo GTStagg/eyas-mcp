@@ -38,6 +38,10 @@ MODULE_METADATA: dict[str, dict[str, Any]] = {
         "title": "Audit Log",
         "slug": "audit-log",
     },
+    "browser": {
+        "title": "Seraphic Enterprise Browser",
+        "slug": "enterprise-browser",
+    },
     "cases": {
         "title": "Case Management",
         "slug": "cases",
@@ -384,6 +388,33 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
     ],
     "falcon_get_host_details": [
         "Get the full details for host device abc123",
+    ],
+    "falcon_search_browser_agents": [
+        "Which users are running the Seraphic browser extension on Chrome?",
+    ],
+    "falcon_get_browser_agents": [
+        "Get the details of browser agent 0b5c8f1e-2d3a-4c6b-9e7f-1a2b3c4d5e6f",
+    ],
+    "falcon_search_browser_rules": [
+        "Which browser DLP rules are active?",
+    ],
+    "falcon_get_browser_rules": [
+        "Show browser rule 1042 and who it applies to",
+    ],
+    "falcon_get_browser_extension_analysis": [
+        "How risky is the Chrome extension ddkjiahejlhfcafbddmgiahcphecmpfh?",
+    ],
+    "falcon_get_browser_tenant_settings": [
+        "How often does the enterprise browser make users sign in?",
+    ],
+    "falcon_activate_browser_agents": [
+        "Reactivate the browser agent I deactivated earlier",
+    ],
+    "falcon_deactivate_browser_agents": [
+        "Deactivate the browser agent on the retired kiosk",
+    ],
+    "falcon_run_browser_agent_tasks": [
+        "Remove browsing data and close all windows on that user's browser",
     ],
     "falcon_search_ods_scans": [
         "Did any on-demand scan this week find malware?",

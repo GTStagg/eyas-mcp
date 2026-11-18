@@ -70,6 +70,7 @@ See [What eyas-mcp Adds](docs/capabilities.md) for the full overview.
 | [Falcon Sandbox](docs/modules/sandbox.md) | Search sandbox reports and submissions, read a trimmed report, check for uploaded samples, submit files or URLs for detonation, upload samples, and delete reports or samples |
 | [Scheduled Reports](docs/modules/scheduled-reports.md) | Manage scheduled reports and download report files |
 | [Sensor Usage](docs/modules/sensor-usage.md) | Access and analyze sensor usage data |
+| [Seraphic Enterprise Browser](docs/modules/enterprise-browser.md) | Search browser agents by host, user, browser, status and protection type, read browser policy rules by category, check a browser extension's risk analysis, read Seraphic tenant settings, activate or deactivate agents, and close windows, refresh tabs or remove browsing data on an agent |
 | [Serverless](docs/modules/serverless.md) | Search for vulnerabilities in serverless functions |
 | [Shield](docs/modules/shield.md) | SaaS security posture, checks, alerts, app inventory, and AI agents built in connected SaaS platforms |
 | [Spotlight](docs/modules/spotlight.md) | Manage and analyze vulnerability data and security assessments, and see each host's installed and pending patches |

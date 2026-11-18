@@ -32,6 +32,17 @@ API_SCOPE_REQUIREMENTS = {
     "create_scan": ["On-demand scans (ODS):write"],
     "cancel_scans": ["On-demand scans (ODS):write"],
     "delete_scheduled_scans": ["On-demand scans (ODS):write"],
+    # Seraphic Enterprise Browser
+    "CombinedQueryAgents": ["Secure Access:read"],
+    "QueryAgents": ["Secure Access:read"],
+    "GetAgents": ["Secure Access:read"],
+    "QueryRulesMixin0": ["Secure Access:read"],
+    "GetRules": ["Secure Access:read"],
+    "GetExtensionAnalysis": ["Secure Access:read"],
+    "GetTenantSettings": ["Secure Access:read"],
+    "ActivateAgents": ["Secure Access:write"],
+    "DeactivateAgents": ["Secure Access:write"],
+    "ApplyAgentTasks": ["Secure Access:write"],
     # Falcon Sandbox
     "QueryReports": ["Sandbox (Falcon Intelligence):read"],
     "GetSummaryReports": ["Sandbox (Falcon Intelligence):read"],

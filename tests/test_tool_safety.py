@@ -35,6 +35,10 @@ READS_USING_WRITE_VERBS = frozenset(
         "AggregateNotificationsExposedDataRecordsV1",
         "AggregateNotificationsV1",
         "AggregateRemediations",
+        # Seraphic Enterprise Browser searches that take their filter in a POST body
+        "CombinedQueryAgents",
+        "QueryAgents",
+        "QueryRulesMixin0",
         # Starts an audit log query job; reads the log and changes nothing
         "CreateQueryJob",
         "GetCaseActivityByIds",

@@ -49,6 +49,10 @@ MUTATING_TOOL_ALLOWLIST: set[str] = {
     "falcon_create_containment_allowlist_rules",
     "falcon_update_containment_allowlist_labels",
     "falcon_delete_containment_allowlist_rules",
+    # browser module
+    "falcon_activate_browser_agents",
+    "falcon_deactivate_browser_agents",
+    "falcon_run_browser_agent_tasks",
     # ods module
     "falcon_start_ods_scan",
     "falcon_cancel_ods_scans",
