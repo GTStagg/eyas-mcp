@@ -21,6 +21,7 @@ This gives tools like Claude Desktop, VS Code, Gemini CLI, and custom agents dir
 | [Scan for Malware](modules/on-demand-scans.md) | Run on-demand scans on hosts and review what they found. |
 | [Audit Console Activity](modules/audit-log.md) | See who logged in, changed API clients, or edited policies, and when. |
 | [Review Access](modules/users.md) | See who holds which Falcon roles and what each role permits. |
+| [Secure the Browser](modules/enterprise-browser.md) | Find Seraphic browser agents, review policy rules and extension risk, and act on a browser. |
 | [Monitor Cloud Posture](modules/cloud.md) | Search CSPM assets, container images, and Kubernetes workloads. |
 | [Assess Identity Risk](modules/idp.md) | Investigate entities, analyze timelines, and map relationships. |
 | [Execute CQL Queries](modules/ngsiem.md) | Run searches against CrowdStrike Next-Gen SIEM. |

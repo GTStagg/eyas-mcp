@@ -3,7 +3,9 @@
 
 # Changelog
 
-## Unreleased
+## 0.23.0 (2026-11-18)
+
+A new module for Seraphic Enterprise Browser: browser agents and response tasks, policy rules, extension risk analysis, destination groups and sensitive data profiles.
 
 ### Features
 
