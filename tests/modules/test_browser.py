@@ -68,6 +68,18 @@ class TestBrowserModule(TestModules):
                 "falcon_activate_browser_agents",
                 "falcon_deactivate_browser_agents",
                 "falcon_run_browser_agent_tasks",
+                "falcon_search_browser_destination_groups",
+                "falcon_get_browser_destination_groups",
+                "falcon_search_browser_data_profiles",
+                "falcon_get_browser_data_profiles",
+                "falcon_create_browser_destination_group",
+                "falcon_update_browser_destination_group",
+                "falcon_delete_browser_destination_group",
+                "falcon_create_browser_data_profile",
+                "falcon_update_browser_data_profile",
+                "falcon_delete_browser_data_profile",
+                "falcon_set_browser_rule_status",
+                "falcon_update_browser_rule_extensions",
             ]
         )
 
@@ -77,6 +89,14 @@ class TestBrowserModule(TestModules):
             ("falcon_activate_browser_agents", False, True),
             ("falcon_deactivate_browser_agents", False, True),
             ("falcon_run_browser_agent_tasks", True, False),
+            ("falcon_create_browser_destination_group", False, False),
+            ("falcon_update_browser_destination_group", True, True),
+            ("falcon_delete_browser_destination_group", True, True),
+            ("falcon_create_browser_data_profile", False, False),
+            ("falcon_update_browser_data_profile", True, True),
+            ("falcon_delete_browser_data_profile", True, True),
+            ("falcon_set_browser_rule_status", True, True),
+            ("falcon_update_browser_rule_extensions", True, True),
         ):
             with self.subTest(tool=name):
                 self.assert_tool_annotations(

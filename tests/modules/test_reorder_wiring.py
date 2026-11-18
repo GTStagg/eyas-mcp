@@ -528,6 +528,18 @@ CASES: list[ReorderCase] = [
         get_patch="client.command",
         site=("falcon_mcp/modules/browser.py", "_query_then_get"),
     ),
+    *[
+        ReorderCase(
+            tool=f"falcon_{method}",
+            module_cls=BrowserModule,
+            method=method,
+            id_field="id",
+            query_patch="client.command",
+            get_patch="client.command",
+            site=("falcon_mcp/modules/browser.py", "_query_then_get"),
+        )
+        for method in ("search_browser_destination_groups", "search_browser_data_profiles")
+    ],
 ]
 
 

@@ -416,6 +416,42 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
     "falcon_run_browser_agent_tasks": [
         "Remove browsing data and close all windows on that user's browser",
     ],
+    "falcon_search_browser_destination_groups": [
+        "Which browser destination groups block gambling sites?",
+    ],
+    "falcon_get_browser_destination_groups": [
+        "Show the domains in destination group 3f2a9c4e-8b1d-4e6f-9a2b-7c5d0e1f2a3b",
+    ],
+    "falcon_search_browser_data_profiles": [
+        "Which sensitive data profiles do the browser DLP rules use?",
+    ],
+    "falcon_get_browser_data_profiles": [
+        "Show the regexes in sensitive data profile 4a3b0d5f-9c2e-4f70-8b3c-8d6e1f2a3b4c",
+    ],
+    "falcon_create_browser_destination_group": [
+        "Create a destination group for our file-sharing vendors' domains",
+    ],
+    "falcon_update_browser_destination_group": [
+        "Add *.example.com to the approved AI tools destination group",
+    ],
+    "falcon_delete_browser_destination_group": [
+        "Delete the unused test destination group",
+    ],
+    "falcon_create_browser_data_profile": [
+        "Create a sensitive data profile that detects our employee ID format",
+    ],
+    "falcon_update_browser_data_profile": [
+        "Add a regex for project codes to the internal identifiers profile",
+    ],
+    "falcon_delete_browser_data_profile": [
+        "Delete the sensitive data profile no rule uses",
+    ],
+    "falcon_set_browser_rule_status": [
+        "Turn off browser rule 1042",
+    ],
+    "falcon_update_browser_rule_extensions": [
+        "Add this extension to the browser's extension block rule",
+    ],
     "falcon_search_ods_scans": [
         "Did any on-demand scan this week find malware?",
     ],
